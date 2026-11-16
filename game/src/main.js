@@ -1,18 +1,19 @@
 // WINDWARD POST — game loop, screens and rules.
 // Owns the state; render.js only draws it, boat.js/sea.js/wind.js only step it.
 
-import { BOAT, BUOY, BUOY_BTN, DAYS, GUST, SCORE, VIEW } from './config.js';
+import { BOAT, BUOY, BUOY_BTN, DAYS, GUST, MAELSTROM, SCORE, VIEW, WAVES_PER_DAY } from './config.js';
 import { clamp, makeRng } from './random.js';
 import { createAudio } from './audio.js';
 import { createBoat, rockHit, stepBoat } from './boat.js';
 import { createRenderer } from './render.js';
-import { createSea, harborById, spawnCrate, stepSea } from './sea.js';
+import { createSea, harborById, spawnCrate, spawnWaveStorm, stepSea } from './sea.js';
 import { createInput } from './input.js';
 import { createWind, stepWind, stormAt } from './wind.js';
 import { offerUpgrades } from './upgrades.js';
-import { buildContracts, onDelivery, onRock, onStorm } from './contracts.js';
+import { buildContracts, forceCompleteMaelstrom, onDelivery, onMaelstrom, onRock, onStorm } from './contracts.js';
 import { inChannel, placeBuoy as layBuoy, placementProblem } from './buoys.js';
 import { createRivals, stepRivals } from './rivals.js';
+import { spawnMaelstrom, stepMaelstrom } from './maelstrom.js';
 import { stageShot } from './shots.js';
 
 const STEP = 1 / 60;
@@ -64,6 +65,13 @@ export function createGame(canvas, seed) {
       buoyStock: BUOY.stockPerDay,
       placeBuoy: false,
       placeGhost: null,
+      // v5: storm waves (3 per day) and the day-3 boss hunt. maelstromSurvived
+      // and maelstromBonus are run-level — the boss only ever hunts on day 3.
+      wave: 1,
+      waveDuration: 0,
+      wavesSurvived: 0,
+      maelstromSurvived: false,
+      maelstromBonus: 0,
       stats: { delivered: 0, gold: 0, fragile: 0, contractsDone: 0, crashes: 0, bestChain: 1, buoysPlaced: 0 },
       // v4: the race — per-day rival deliveries (reset each day) and run
       // totals (shown on the win screen). state.delivered is the player's
@@ -83,9 +91,13 @@ export function createGame(canvas, seed) {
     s.daySpec = DAYS[dayIndex];
     s.timeLeft = s.daySpec.seconds;
     s.delivered = 0;
-    s.contracts = buildContracts(rng);
+    s.contracts = buildContracts(rng, dayIndex);
     s.contractRewards = 0;
     s.chainStreak = 0;
+    // v5: the day runs in 3 waves; wave 1's storms are the ones createSea laid.
+    s.wave = 1;
+    s.waveDuration = s.daySpec.seconds / WAVES_PER_DAY;
+    s.wavesSurvived = 0;
     s.wind.veer = s.daySpec.veer;
     s.sea = createSea(rng, s.daySpec);
     // v4: fresh rivals each day — one on day 1, two from day 2 — and a fresh
@@ -232,6 +244,24 @@ export function createGame(canvas, seed) {
     }
     stepWind(s.wind, dt, rng);
     stepSea(s.sea, dt, rng, s.daySpec);
+    // v5: storm waves — the day is split in 3, and every new wave brings
+    // another, faster storm. Day 3's final wave wakes the MAELSTROM.
+    {
+      const elapsed = s.daySpec.seconds - s.timeLeft;
+      const targetWave = Math.min(WAVES_PER_DAY, Math.floor(elapsed / s.waveDuration) + 1);
+      while (s.wave < targetWave) {
+        s.wave += 1;
+        spawnWaveStorm(s.sea, rng, s.daySpec, s.wave);
+        if (s.dayIndex === 2 && s.wave === WAVES_PER_DAY) {
+          spawnMaelstrom(s.sea, rng, s.boat);
+          s.message = 'WAVE 3 — THE MAELSTROM WAKES!';
+        } else {
+          s.message = `WAVE ${s.wave} INCOMING — STORMS RISING`;
+        }
+        s.messageTime = 3;
+        audio.horn();
+      }
+    }
     const events = [];
     stepBoat(s.boat, input, s.wind, s.sea, dt, events);
     // v4: rivals step after the player, so the player wins a same-tick race
@@ -280,11 +310,50 @@ export function createGame(canvas, seed) {
       if (s.boat.hull <= 0) { s.boat.hull = 0; endRun(false, 'A storm tore the mailboat apart.'); }
     }
 
+    // v5: the MAELSTROM hunt — it chases the boat, hurts more than a normal
+    // storm, and the channel halves its damage too. Outlast its 20s and the
+    // sea calms for +250; the SURVIVE contract tracks the same 20s.
+    const m = s.sea.maelstrom;
+    if (m && s.screen === 'play') {
+      stepMaelstrom(m, s.boat, dt);
+      completeContracts(onMaelstrom(s, dt));
+      if (Math.hypot(s.boat.x - m.x, s.boat.y - m.y) < m.r) {
+        let rate = s.upgradeMods.stormShield ? 0.5 : 1;
+        if (s.boat.inChannel) rate *= BUOY.stormShelter;
+        s.boat.hull -= MAELSTROM.damagePerSec * rate * dt;
+        if (rng() < dt * 6) burst(s.boat.x, s.boat.y, '#c084fc', 3, 90);
+        if (s.boat.hull <= 0) { s.boat.hull = 0; endRun(false, 'The Maelstrom swallowed the mailboat.'); }
+      }
+      if (m.timer <= 0 && s.screen === 'play') {
+        s.maelstromSurvived = true;
+        s.maelstromBonus = MAELSTROM.bonus;
+        s.sea.maelstrom = null;
+        burst(m.x, m.y, '#c084fc', 30, 220);
+        floater(s.boat.x, s.boat.y - 66, 'MAELSTROM OUTLASTED!', '#c084fc', 22);
+        s.message = 'MAELSTROM OUTLASTED — THE SEA CALMS';
+        s.messageTime = 2.5;
+        audio.win();
+      }
+    }
+
     // Day timer.
     s.timeLeft -= dt;
     if (s.timeLeft <= 0 && s.screen === 'play') {
       s.timeLeft = 0;
+      s.wavesSurvived = s.wave;
       if (s.delivered >= s.daySpec.quota) {
+        // v5: the day is won while the Maelstrom still hunts — if it hunted
+        // for a real stretch, that counts as surviving it.
+        const mm = s.sea.maelstrom;
+        if (mm && mm.age > 5 && !s.maelstromSurvived) {
+          const f = forceCompleteMaelstrom(s);
+          if (f) {
+            s.score += f.reward;
+            s.maelstromSurvived = true;
+            s.maelstromBonus = f.reward;
+          }
+          s.sea.maelstrom = null;
+        }
         s.score += SCORE.dayBonus;
         if (s.dayIndex === 2) endRun(true, '');
         else {
