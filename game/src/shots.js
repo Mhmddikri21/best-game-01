@@ -87,43 +87,50 @@ export function stageShot(name, game) {
   const input = makeVirtualInput();
   game.resetRun();
   if (name === 'play') {
-    runSteps(game, input, 30);
-    return;
-  }
-  if (name === 'action') {
-    // Play until the boat carries a crate and nears its harbor, then burst.
-    // Cap well inside the day timer so the day cannot end mid-scene.
-    runSteps(game, input, 55, (g) => {
+    // Day 2, mid-run: three storms, extra rocks, contracts ticking, boat carrying.
+    input.press('Enter');
+    game.step(STEP, input);
+    game.startDay(1);
+    runSteps(game, input, 45, (g) => {
       const s = g.state;
       if (s.screen !== 'play') return true;
       if (s.boat.cargo.length === 0) return false;
+      if (s.daySpec.seconds - s.timeLeft < 12) return false;
       const h = harborById(s.sea, s.boat.cargo[0].harbor);
-      return Math.hypot(s.boat.x - h.x, s.boat.y - h.y) < 400;
+      return Math.hypot(s.boat.x - h.x, s.boat.y - h.y) > 200;
     });
-    if (game.state.screen === 'play') {
-      input.press('Space');
-      runSteps(game, input, 0.6);
-    }
+    return;
+  }
+  if (name === 'upgrade') {
+    // Play day 1 for real until it clears: the upgrade pick is a real screen.
+    input.press('Enter');
+    game.step(STEP, input);
+    runSteps(game, input, 200, (g) => g.state.screen === 'dayclear');
     return;
   }
   if (name === 'end') {
-    // Day 3 with a one-crate quota and a crate beside the boat: the autopilot really
-    // wins the day, and sunset then shows the real win screen.
+    // Day 3 with a three-crate quota, carry-one-at-a-time: the autopilot really
+    // wins the day, and the win screen's numbers match the quota exactly.
     input.press('Enter');
     game.step(STEP, input);
     game.startDay(2);
     const s = game.state;
-    s.daySpec = { ...s.daySpec, quota: 1 };
-    s.timeLeft = 120;
+    s.daySpec = { ...s.daySpec, quota: 3 };
+    s.boat.carryMax = 1;
+    s.timeLeft = 110;
     s.sea.crates = [{
       x: clamp(s.boat.x + 90, 60, 1220),
       y: clamp(s.boat.y - 40, 60, 660),
       harbor: 'amber',
       gold: false,
+      fragile: false,
       bob: 0,
       born: 0,
     }];
-    runSteps(game, input, 150, (g) => g.state.delivered >= 1);
+    runSteps(game, input, 150, (g) => g.state.delivered >= 3);
+    // Freeze the count: no more pickups or deliveries while sunset runs out.
+    game.state.boat.cargo = [];
+    game.state.sea.crates = [];
     game.state.timeLeft = 0.4;
     runSteps(game, input, 2);
     return;
