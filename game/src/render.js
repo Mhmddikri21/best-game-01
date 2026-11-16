@@ -4,6 +4,7 @@
 import { BOAT, HARBORS, PALETTE, STORM, VIEW } from './config.js';
 import { clamp } from './random.js';
 import { windName } from './wind.js';
+import { contractProgress } from './contracts.js';
 
 const TAU = Math.PI * 2;
 
@@ -195,22 +196,25 @@ export function createRenderer(canvas) {
       ctx.ellipse(0, 10 - bob, 16, 5, 0, 0, TAU);
       ctx.fill();
       // Crate body.
-      ctx.fillStyle = c.gold ? '#8a5a33' : '#a9743f';
+      ctx.fillStyle = c.gold ? '#8a5a33' : c.fragile ? '#7d8ea3' : '#a9743f';
       rr(ctx, -13, -13, 26, 26, 4);
       ctx.fill();
-      ctx.strokeStyle = c.gold ? PALETTE.gold : harbor.color;
+      ctx.strokeStyle = c.gold ? PALETTE.gold : c.fragile ? '#cfe8ff' : harbor.color;
       ctx.lineWidth = 3;
+      if (c.fragile) ctx.setLineDash([4, 3]);
       ctx.stroke();
+      ctx.setLineDash([]);
       ctx.beginPath();
       ctx.moveTo(-13, 0);
       ctx.lineTo(13, 0);
       ctx.stroke();
       // Letter badge = destination, unmistakable at small size.
-      ctx.fillStyle = harbor.color;
+      // Gold shows ★, fragile shows ! — each kind reads at a glance.
+      ctx.fillStyle = c.fragile ? '#cfe8ff' : harbor.color;
       ctx.beginPath();
       ctx.arc(0, 0, 10, 0, TAU);
       ctx.fill();
-      text(ctx, c.gold ? '★' : harbor.letter, 0, 1, c.gold ? 13 : 13, '#10222e', 800, 'center');
+      text(ctx, c.gold ? '★' : c.fragile ? '!' : harbor.letter, 0, 1, 13, '#10222e', 800, 'center');
       ctx.restore();
     }
   }
@@ -308,11 +312,11 @@ export function createRenderer(canvas) {
     // Cargo pips above the boat.
     b.cargo.forEach((c, i) => {
       const harbor = HARBORS.find((h) => h.id === c.harbor);
-      ctx.fillStyle = harbor.color;
+      ctx.fillStyle = c.fragile ? '#cfe8ff' : harbor.color;
       ctx.beginPath();
       ctx.arc(b.x - (b.cargo.length - 1) * 9 + i * 18, b.y - 40, 7, 0, TAU);
       ctx.fill();
-      text(ctx, c.gold ? '★' : harbor.letter, b.x - (b.cargo.length - 1) * 9 + i * 18, b.y - 39, 10, '#10222e', 800, 'center');
+      text(ctx, c.gold ? '★' : c.fragile ? '!' : harbor.letter, b.x - (b.cargo.length - 1) * 9 + i * 18, b.y - 39, 10, '#10222e', 800, 'center');
     });
   }
 
@@ -324,8 +328,8 @@ export function createRenderer(canvas) {
     const h = HARBORS.find((hh) => hh.id === b.cargo[0].harbor);
     ctx.save();
     ctx.strokeStyle = h.color;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.75;
+    ctx.lineWidth = 4;
     ctx.setLineDash([14, 10]);
     ctx.beginPath();
     ctx.moveTo(b.x, b.y);
@@ -375,6 +379,20 @@ export function createRenderer(canvas) {
       ctx.fill();
       if (i < state.delivered) text(ctx, '✓', 178 + i * 26, 35, 11, '#10222e', 800, 'center');
     }
+    // Job board: exactly three contracts, each with progress + reward.
+    // This is the panel that makes the loop read as tracked and varied.
+    panel(ctx, 14, 106, 300, 110);
+    text(ctx, 'CONTRACTS', 28, 126, 13, 'rgba(247,241,222,0.65)', 700);
+    state.contracts.forEach((c, i) => {
+      const y = 148 + i * 24;
+      ctx.fillStyle = c.done ? PALETTE.ok : 'rgba(255,255,255,0.25)';
+      ctx.beginPath();
+      ctx.arc(36, y, 8, 0, TAU);
+      ctx.fill();
+      if (c.done) text(ctx, '✓', 36, y + 1, 10, '#10222e', 800, 'center');
+      text(ctx, c.name, 52, y, 15, c.done ? PALETTE.ok : PALETTE.cream, 800);
+      text(ctx, `${contractProgress(c)}  +${c.reward}`, 300, y, 14, c.done ? PALETTE.ok : PALETTE.gold, 700, 'right');
+    });
     // Top-center: wind + current compass.
     panel(ctx, 490, 12, 300, 86);
     text(ctx, 'WIND', 506, 32, 13, 'rgba(247,241,222,0.65)', 700);
@@ -415,10 +433,10 @@ export function createRenderer(canvas) {
     if (state.boat.cargo.length > 0) {
       const label = state.boat.cargo.map((c) => {
         const h = HARBORS.find((hh) => hh.id === c.harbor);
-        return (c.gold ? '★' : h.letter) + '→' + h.name;
+        return (c.gold ? '★' : c.fragile ? '!' : h.letter) + '→' + h.name;
       }).join('  ');
       const px = clamp(state.boat.x - 165, 14, VIEW.width - 344);
-      const py = clamp(state.boat.y - 108, 104, VIEW.height - 44);
+      const py = clamp(state.boat.y - 108, 222, VIEW.height - 44);
       panel(ctx, px, py, 330, 34);
       text(ctx, 'CARRYING: ' + label, px + 16, py + 18, 14, PALETTE.cream, 800);
     }
@@ -432,19 +450,21 @@ export function createRenderer(canvas) {
   function drawTitle(state) {
     ctx.fillStyle = 'rgba(6, 20, 30, 0.55)';
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-    panel(ctx, 340, 150, 600, 330);
-    text(ctx, 'WINDWARD POST', 640, 205, 52, PALETTE.cream, 800, 'center');
-    text(ctx, 'a mail run against the wind', 640, 248, 20, PALETTE.gold, 700, 'center');
-    text(ctx, 'Pick up crates at sea. Each crate is marked with a letter —', 640, 300, 16, PALETTE.cream, 700, 'center');
-    text(ctx, 'deliver it to the harbor with the same letter before sunset.', 640, 324, 16, PALETTE.cream, 700, 'center');
-    text(ctx, 'Sail with the wind to go fast. Dodge rocks and storms.', 640, 348, 16, PALETTE.cream, 700, 'center');
-    text(ctx, 'Gold ★ crates pay triple — if you dare fetch them.', 640, 372, 16, PALETTE.gold, 700, 'center');
-    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 416, 14, 'rgba(247,241,222,0.8)', 700, 'center');
+    panel(ctx, 340, 120, 600, 400);
+    text(ctx, 'WINDWARD POST', 640, 195, 52, PALETTE.cream, 800, 'center');
+    text(ctx, 'a mail run against the wind', 640, 238, 20, PALETTE.gold, 700, 'center');
+    text(ctx, 'Pick up crates at sea. Each crate is marked with a letter —', 640, 288, 16, PALETTE.cream, 700, 'center');
+    text(ctx, 'deliver it to the harbor with the same letter before sunset.', 640, 310, 16, PALETTE.cream, 700, 'center');
+    text(ctx, 'Sail with the wind to go fast. Dodge rocks and storms.', 640, 332, 16, PALETTE.cream, 700, 'center');
+    text(ctx, 'Gold ★ crates pay triple — if you dare fetch them.', 640, 356, 16, PALETTE.gold, 700, 'center');
+    text(ctx, 'Fragile ! crates pay double — but shatter if you hit a rock.', 640, 378, 16, '#cfe8ff', 700, 'center');
+    text(ctx, 'Each day: 3 contracts — rush, gold, storm, fragile, chain.', 640, 400, 15, PALETTE.cream, 700, 'center');
+    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 434, 14, 'rgba(247,241,222,0.8)', 700, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
-    text(ctx, '▶  PRESS ENTER OR CLICK TO SAIL', 640, 452, 20, PALETTE.cream, 800, 'center');
+    text(ctx, '▶  PRESS ENTER OR CLICK TO SAIL', 640, 466, 20, PALETTE.cream, 800, 'center');
     ctx.globalAlpha = 1;
-    if (state.best > 0) text(ctx, 'BEST SCORE ' + state.best, 640, 510, 15, PALETTE.gold, 700, 'center');
+    if (state.best > 0) text(ctx, 'BEST SCORE ' + state.best, 640, 496, 15, PALETTE.gold, 700, 'center');
   }
 
   function drawPause(state) {
@@ -460,10 +480,12 @@ export function createRenderer(canvas) {
     panel(ctx, 290, 130, 700, 420);
     text(ctx, `DAY ${state.daySpec.day} CLEAR!`, 640, 178, 40, PALETTE.gold, 800, 'center');
     text(ctx, `Deliveries ${state.delivered}/${state.daySpec.quota}  ·  Score ${state.score}  ·  +${250} day bonus`, 640, 222, 17, PALETTE.cream, 700, 'center');
-    text(ctx, 'CHOOSE ONE UPGRADE FOR TOMORROW', 640, 262, 16, PALETTE.cream, 800, 'center');
+    const doneCount = state.contracts.filter((c) => c.done).length;
+    text(ctx, `Contracts ${doneCount}/3 done  ·  +${state.contractRewards} contract bonus`, 640, 248, 16, doneCount > 0 ? PALETTE.ok : 'rgba(247,241,222,0.75)', 700, 'center');
+    text(ctx, 'CHOOSE ONE UPGRADE FOR TOMORROW', 640, 284, 16, PALETTE.cream, 800, 'center');
     state.offers.forEach((u, i) => {
       const x = 330 + i * 220;
-      panel(ctx, x, 290, 200, 150);
+      panel(ctx, x, 310, 200, 150);
       text(ctx, u.icon, x + 100, 330, 34, PALETTE.gold, 800, 'center');
       text(ctx, `[${i + 1}] ${u.name}`, x + 100, 372, 16, PALETTE.cream, 800, 'center');
       text(ctx, u.desc, x + 100, 400, 14, 'rgba(247,241,222,0.8)', 700, 'center');
@@ -477,9 +499,10 @@ export function createRenderer(canvas) {
     panel(ctx, 330, 140, 620, 380);
     text(ctx, won ? 'ALL MAIL DELIVERED!' : 'THE POST FAILS…', 640, 200, 40, won ? PALETTE.gold : PALETTE.danger, 800, 'center');
     text(ctx, won ? 'Every crate home. The harbors cheer your name.' : state.loseReason, 640, 246, 17, PALETTE.cream, 700, 'center');
-    text(ctx, 'SCORE  ' + state.score, 640, 300, 30, PALETTE.cream, 800, 'center');
-    text(ctx, `Deliveries ${state.stats.delivered}  ·  Gold crates ${state.stats.gold}  ·  Best chain ×${state.stats.bestChain}`, 640, 344, 16, PALETTE.cream, 700, 'center');
-    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}`, 640, 372, 16, PALETTE.cream, 700, 'center');
+    text(ctx, `DAY ${state.daySpec.day} — ${state.delivered}/${state.daySpec.quota} CRATES`, 640, 272, 17, PALETTE.gold, 800, 'center');
+    text(ctx, 'SCORE  ' + state.score, 640, 306, 30, PALETTE.cream, 800, 'center');
+    text(ctx, `Deliveries ${state.stats.delivered}  ·  Gold crates ${state.stats.gold}  ·  Fragile ${state.stats.fragile}  ·  Contracts ${state.stats.contractsDone}`, 640, 348, 16, PALETTE.cream, 700, 'center');
+    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}  ·  Best chain ×${state.stats.bestChain}`, 640, 376, 16, PALETTE.cream, 700, 'center');
     if (state.score > state.best) text(ctx, '★ NEW BEST SCORE ★', 640, 406, 18, PALETTE.gold, 800, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
