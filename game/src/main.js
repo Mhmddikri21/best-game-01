@@ -10,6 +10,7 @@ import { createSea, harborById, spawnCrate, stepSea } from './sea.js';
 import { createInput } from './input.js';
 import { createWind, stepWind, stormAt } from './wind.js';
 import { offerUpgrades } from './upgrades.js';
+import { buildContracts, onDelivery, onRock, onStorm } from './contracts.js';
 import { stageShot } from './shots.js';
 
 const STEP = 1 / 60;
@@ -55,7 +56,10 @@ export function createGame(canvas, seed) {
       messageTime: 0,
       particles: [],
       floaters: [],
-      stats: { delivered: 0, gold: 0, crashes: 0, bestChain: 1 },
+      contracts: [],
+      contractRewards: 0,
+      chainStreak: 0,
+      stats: { delivered: 0, gold: 0, fragile: 0, contractsDone: 0, crashes: 0, bestChain: 1 },
       wind: createWind(rng),
       sea: createSea(rng, DAYS[0]),
       boat: createBoat({}),
@@ -68,6 +72,10 @@ export function createGame(canvas, seed) {
     s.daySpec = DAYS[dayIndex];
     s.timeLeft = s.daySpec.seconds;
     s.delivered = 0;
+    s.contracts = buildContracts(rng);
+    s.contractRewards = 0;
+    s.chainStreak = 0;
+    s.wind.veer = s.daySpec.veer;
     s.sea = createSea(rng, s.daySpec);
     const keep = { ...s.upgradeMods };
     s.boat = createBoat(keep);
@@ -91,9 +99,30 @@ export function createGame(canvas, seed) {
     game.state.floaters.push({ x, y, str, color, size, life: 1.4, maxLife: 1.4 });
   }
 
+  function completeContracts(done) {
+    const s = game.state;
+    for (const c of done) {
+      s.score += c.reward;
+      floater(s.boat.x, s.boat.y - 66, `CONTRACT ${c.name} +${c.reward}`, '#ffc857', 20);
+      s.message = `CONTRACT DONE — ${c.name} +${c.reward}`;
+      s.messageTime = 2;
+    }
+    if (done.length > 0) audio.gold();
+  }
+
   function rockCrashFX() {
     const s = game.state;
     s.stats.crashes += 1;
+    s.chainStreak = 0;
+    onRock(s);
+    // A fragile crate in the hold shatters on a rock hit — the risk of the double pay.
+    const fi = s.boat.cargo.findIndex((c) => c.fragile);
+    if (fi >= 0) {
+      s.boat.cargo.splice(fi, 1);
+      floater(s.boat.x, s.boat.y - 66, 'FRAGILE CRATE LOST!', '#ff6b5e', 18);
+      s.message = 'A fragile crate shattered on the rock!';
+      s.messageTime = 2;
+    }
     if (s.chain > 1) s.chain = 1;
     audio.crash();
     burst(s.boat.x, s.boat.y, '#bfe8dd', 18, 160);
@@ -117,18 +146,25 @@ export function createGame(canvas, seed) {
     const mine = s.boat.cargo.filter((c) => c.harbor === harbor.id);
     if (mine.length === 0) return;
     for (const c of mine) {
-      const base = c.gold ? SCORE.goldDelivery : SCORE.delivery;
+      const base = c.gold ? SCORE.goldDelivery : c.fragile ? SCORE.fragileDelivery : SCORE.delivery;
       const gained = base + SCORE.chainStep * (s.chain - 1);
       s.score += gained;
-      s.tips += c.gold ? SCORE.tipGold : SCORE.tipNormal;
+      s.tips += c.gold ? SCORE.tipGold : c.fragile ? SCORE.tipFragile : SCORE.tipNormal;
       s.stats.delivered += 1;
       if (c.gold) s.stats.gold += 1;
-      floater(harbor.x, harbor.y - 90, `+${gained}`, c.gold ? '#ffc857' : '#7be0a3', 24);
+      if (c.fragile) s.stats.fragile += 1;
+      floater(harbor.x, harbor.y - 90, `+${gained}`, c.gold ? '#ffc857' : c.fragile ? '#cfe8ff' : '#7be0a3', 24);
       if (c.gold) audio.gold();
     }
     s.delivered += mine.length;
+    s.chainStreak += mine.length;
     s.stats.bestChain = Math.max(s.stats.bestChain, s.chain);
     s.chain += 1;
+    // Contract hooks: rush / gold / fragile / chain progress from these crates.
+    const elapsed = s.daySpec.seconds - s.timeLeft;
+    const done = [];
+    for (const c of mine) done.push(...onDelivery(s, c, elapsed));
+    completeContracts(done);
     s.boat.cargo = s.boat.cargo.filter((c) => c.harbor !== harbor.id);
     harbor.pulse = 1;
     audio.deliver();
@@ -173,6 +209,7 @@ export function createGame(canvas, seed) {
     if (storm) {
       const rate = s.upgradeMods.stormShield ? 0.5 : 1;
       s.boat.hull -= BOAT.stormDamagePerSec * rate * dt;
+      completeContracts(onStorm(s, dt));
       if (s.chain > 1 && rng() < dt * 2) s.chain = 1;
       if (rng() < dt * 6) burst(s.boat.x, s.boat.y, '#a78bfa', 3, 90);
       if (s.boat.hull <= 0) { s.boat.hull = 0; endRun(false, 'A storm tore the mailboat apart.'); }
@@ -245,7 +282,7 @@ export function createGame(canvas, seed) {
       if (n >= 0 && s.offers[n]) applyOffer(s.offers[n]);
       else if (input.waypoint) {
         const m = input.mouse;
-        const idx = s.offers.findIndex((u, i) => m.x >= 330 + i * 220 && m.x <= 530 + i * 220 && m.y >= 290 && m.y <= 440);
+        const idx = s.offers.findIndex((u, i) => m.x >= 330 + i * 220 && m.x <= 530 + i * 220 && m.y >= 310 && m.y <= 460);
         input.clearWaypoint();
         if (idx >= 0) applyOffer(s.offers[idx]);
       }
