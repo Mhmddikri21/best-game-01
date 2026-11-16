@@ -12,6 +12,7 @@ import { createWind, stepWind, stormAt } from './wind.js';
 import { offerUpgrades } from './upgrades.js';
 import { buildContracts, onDelivery, onRock, onStorm } from './contracts.js';
 import { inChannel, placeBuoy as layBuoy, placementProblem } from './buoys.js';
+import { createRivals, stepRivals } from './rivals.js';
 import { stageShot } from './shots.js';
 
 const STEP = 1 / 60;
@@ -64,6 +65,12 @@ export function createGame(canvas, seed) {
       placeBuoy: false,
       placeGhost: null,
       stats: { delivered: 0, gold: 0, fragile: 0, contractsDone: 0, crashes: 0, bestChain: 1, buoysPlaced: 0 },
+      // v4: the race — per-day rival deliveries (reset each day) and run
+      // totals (shown on the win screen). state.delivered is the player's
+      // per-day count, so race.you is not stored twice.
+      rivals: [],
+      race: { rivals: {} },
+      raceTotal: { you: 0, rivals: {} },
       wind: createWind(rng),
       sea: createSea(rng, DAYS[0]),
       boat: createBoat({}),
@@ -81,6 +88,11 @@ export function createGame(canvas, seed) {
     s.chainStreak = 0;
     s.wind.veer = s.daySpec.veer;
     s.sea = createSea(rng, s.daySpec);
+    // v4: fresh rivals each day — one on day 1, two from day 2 — and a fresh
+    // race board. Run totals carry across days for the win screen.
+    s.rivals = createRivals(rng, s.sea, s.daySpec);
+    s.race = { rivals: {} };
+    for (const r of s.rivals) s.race.rivals[r.id] = 0;
     const keep = { ...s.upgradeMods };
     // v3: fresh buoy stock each day (plus any BUOY KIT bonus); yesterday's
     // channel is gone with the old sea — every day plans its own route.
@@ -166,6 +178,7 @@ export function createGame(canvas, seed) {
       if (c.gold) audio.gold();
     }
     s.delivered += mine.length;
+    s.raceTotal.you += mine.length;
     s.chainStreak += mine.length;
     s.stats.bestChain = Math.max(s.stats.bestChain, s.chain);
     s.chain += 1;
@@ -221,6 +234,14 @@ export function createGame(canvas, seed) {
     stepSea(s.sea, dt, rng, s.daySpec);
     const events = [];
     stepBoat(s.boat, input, s.wind, s.sea, dt, events);
+    // v4: rivals step after the player, so the player wins a same-tick race
+    // to a crate. A rival banking a crate can complete contracts (OUTRACE
+    // shrinks) — score those through the same path as player contracts.
+    const rivalDone = stepRivals(s, dt, {
+      floater: (x, y, str, color, size) => floater(x, y, str, color, size),
+      burst: (x, y, color, n, speed) => burst(x, y, color, n, speed),
+    });
+    if (rivalDone.length > 0) completeContracts(rivalDone);
     if (events.some((e) => e.type === 'gust')) {
       audio.gust();
       burst(s.boat.x, s.boat.y, '#7dd3fc', 14, 200);
