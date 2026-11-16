@@ -94,3 +94,18 @@ export const CRATE = {
   fragileChance: 0.12,
   respawnDelaySec: 2.5,
 };
+
+// v3: channel buoys — the placement layer. Stock is per day; each buoy costs
+// tips; buoys near each other link into a channel. Sailing inside the channel
+// is faster and calmer (storm damage halved). The button rect is shared by
+// render.js (draws it) and main.js (clicks it), so the two can never drift.
+export const BUOY = {
+  stockPerDay: 3,
+  cost: 10, // tips
+  linkDist: 300, // px between consecutive buoys to form a channel
+  effectRadius: 70, // px from a buoy or channel segment for the bonus
+  speedBoost: 1.35,
+  stormShelter: 0.5, // storm damage multiplier inside the channel
+};
+
+export const BUOY_BTN = { x: 1116, y: 640, w: 150, h: 66 };
