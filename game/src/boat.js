@@ -1,9 +1,10 @@
 // The mail-boat: heading, sail, speed, hull, cargo and the gust burst.
 // Physics are simple on purpose: turn, catch the wind, mind the rocks.
 
-import { BOAT, GUST, VIEW } from './config.js';
+import { BOAT, BUOY, GUST, VIEW } from './config.js';
 import { angleDiff, clamp } from './random.js';
 import { currentVector, gustAt, windHelp } from './wind.js';
+import { inChannel } from './buoys.js';
 
 export function createBoat(upgrades) {
   return {
@@ -48,7 +49,10 @@ export function stepBoat(boat, input, wind, sea, dt, events) {
   }
 
   const help = windHelp(wind.angle, boat.heading);
-  const target = BOAT.baseSpeed * (boat.speedMod ?? 1) * boat.sail * help;
+  // v3: inside your buoy channel the water is calm and the boat runs faster.
+  boat.inChannel = inChannel(sea.buoys, boat.x, boat.y);
+  const channelBoost = boat.inChannel ? BUOY.speedBoost : 1;
+  const target = BOAT.baseSpeed * (boat.speedMod ?? 1) * boat.sail * help * channelBoost;
   boat.speed += clamp(target - boat.speed, -BOAT.accel * dt, BOAT.accel * dt);
 
   if (input.wasPressed('Space') && boat.gust >= GUST.cost && boat.gustTime <= 0) {
