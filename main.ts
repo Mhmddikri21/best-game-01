@@ -1,12 +1,11 @@
 // WINDWARD POST — a best-game-01 entry (Node 22, standard library only).
-// v4: the mail run becomes a race — rival mail-boats PIP (day 1) and JUNO
-// (from day 2) chase the same crates and bank them at the harbors, first to
-// the crate wins it, tracked on a race scoreboard and an OUTRACE contract.
-// The v3 buoy channel is now impossible to miss: a wide glowing gold lane
-// with flowing dots, gold-ringed buoys, and a floating "+35% CHANNEL SPEED"
-// tag with speed streaks on the boat while it rides the channel. All of v3
-// stays (contracts, fragile crates, escalating days, BUOY KIT upgrade). The
-// game is this directory's game/ folder: plain static files a desktop browser
+// v5: the sea gets teeth — every day runs in 3 storm waves (storms rise
+// every wave, shown on the HUD), and day 3 ends in NIGHTFALL with the
+// MAELSTROM boss storm hunting your boat: survive its 20s for +250, tracked
+// by a survive bar and a SURVIVE THE MAELSTROM contract that is always on
+// the day-3 board. All of v4 stays (rival mail-boats PIP/JUNO and the race
+// scoreboard, the OUTRACE contract, the buoy channel with its +35% tag).
+// The game is this directory's game/ folder: plain static files a desktop browser
 // loads offline (game/index.html and its ES modules, no library and no
 // network request).
 // The program hands it in: it copies game/ and screenshots/ from beside this file to
@@ -14,7 +13,7 @@
 // vendored make.fun library.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Screenshot scenes live behind ?shot=title|play|race|end (see shots.json);
+// Screenshot scenes live behind ?shot=title|play|maelstrom|end (see shots.json);
 // each stages the real rules forward from a seeded world and draws once.
 // (?shot=upgrade still stages the between-days upgrade pick.)
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
