@@ -1,10 +1,11 @@
 // All canvas drawing: sea, islands, harbors, boat, storms, particles, HUD and screens.
 // Nothing here changes game state; it only reads it.
 
-import { BOAT, HARBORS, PALETTE, STORM, VIEW } from './config.js';
+import { BOAT, BUOY, BUOY_BTN, HARBORS, PALETTE, STORM, VIEW } from './config.js';
 import { clamp } from './random.js';
 import { windName } from './wind.js';
 import { contractProgress } from './contracts.js';
+import { channelSegments, placementProblem } from './buoys.js';
 
 const TAU = Math.PI * 2;
 
@@ -264,6 +265,109 @@ export function createRenderer(canvas) {
     }
   }
 
+  // Vector anchor (drawn, not a font glyph, so it renders in any browser).
+  function drawAnchorMark(x, y, size, color, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, size * 0.14);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(x, y - size * 0.62, size * 0.18, 0, TAU);
+    ctx.moveTo(x, y - size * 0.44);
+    ctx.lineTo(x, y + size * 0.5);
+    ctx.moveTo(x - size * 0.42, y - size * 0.28);
+    ctx.lineTo(x + size * 0.42, y - size * 0.28);
+    ctx.moveTo(x - size * 0.55, y + size * 0.1);
+    ctx.lineTo(x, y + size * 0.55);
+    ctx.lineTo(x + size * 0.55, y + size * 0.1);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawBuoys(state) {
+    const buoys = state.sea.buoys;
+    if (!buoys) return;
+    // Channel links first (under the buoys): a glowing dashed lane between
+    // consecutive buoys close enough to link. Gold, not the route line's
+    // teal — the channel must read as its own thing (Luna vision pass).
+    for (const [a, b] of channelSegments(buoys)) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 200, 87, 0.16)';
+      ctx.lineWidth = 13;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 200, 87, 0.65)';
+      ctx.lineWidth = 4;
+      ctx.setLineDash([12, 9]);
+      ctx.lineDashOffset = -state.time * 22;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+    for (const b of buoys.list) {
+      const pulse = 1 + 0.12 * Math.sin(state.time * 3 + b.seed);
+      ctx.fillStyle = 'rgba(125, 211, 252, 0.22)';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 20 * pulse, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#0e3a4d';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 13, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = '#7dd3fc';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      drawAnchorMark(b.x, b.y, 13, '#7dd3fc');
+    }
+    // Placement ghost: the mode is unmistakable — a translucent buoy follows
+    // the mouse, green when the spot is legal, red when it is not, with a
+    // preview link to the buoy it would join.
+    if (state.placeBuoy && state.placeGhost) {
+      const g = state.placeGhost;
+      const problem = placementProblem(state, g.x, g.y);
+      const ok = problem === null;
+      let nearest = null;
+      let nearestD = Infinity;
+      for (const b of buoys.list) {
+        const d = Math.hypot(g.x - b.x, g.y - b.y);
+        if (d < nearestD) { nearestD = d; nearest = b; }
+      }
+      if (nearest && nearestD <= BUOY.linkDist) {
+        ctx.save();
+        ctx.strokeStyle = ok ? 'rgba(255, 200, 87, 0.55)' : 'rgba(255, 107, 94, 0.4)';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 7]);
+        ctx.beginPath();
+        ctx.moveTo(nearest.x, nearest.y);
+        ctx.lineTo(g.x, g.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.globalAlpha = 0.65;
+      ctx.fillStyle = '#0e3a4d';
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, 13, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = ok ? '#7be0a3' : '#ff6b5e';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      drawAnchorMark(g.x, g.y, 13, ok ? '#7be0a3' : '#ff6b5e');
+      ctx.restore();
+      // Pill behind the label so it stays readable over crates and storms.
+      ctx.fillStyle = 'rgba(6,20,32,0.85)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(g.x - 112, g.y + 20, 224, 22, 10); else ctx.rect(g.x - 112, g.y + 20, 224, 22);
+      ctx.fill();
+      text(ctx, ok ? 'CLICK TO LAY BUOY — 10c' : problem, g.x, g.y + 32, 13, ok ? '#7be0a3' : '#ff6b5e', 800, 'center');
+    }
+  }
+
   function drawBoat(state) {
     const b = state.boat;
     // Wake.
@@ -422,23 +526,36 @@ export function createRenderer(canvas) {
     // Bottom: ability cards + controls.
     panel(ctx, 14, 640, 560, 66);
     text(ctx, '[SPACE] GUST BURST', 28, 664, 15, state.boat.gust >= 35 ? PALETTE.cream : 'rgba(247,241,222,0.45)', 800);
-    text(ctx, '↑ SAIL  ↓ REEF  ← → STEER  ·  CLICK: WAYPOINT', 28, 690, 13, 'rgba(247,241,222,0.75)', 700);
+    text(ctx, '↑ SAIL  ↓ REEF  ← → STEER  ·  CLICK: WAYPOINT  ·  B: BUOY', 28, 690, 13, 'rgba(247,241,222,0.75)', 700);
+    // v3: the BUOY button — stock and cost live here, not in another panel.
+    // Clicking it (or B) toggles buoy-place mode; it lights up while placing.
+    panel(ctx, BUOY_BTN.x, BUOY_BTN.y, BUOY_BTN.w, BUOY_BTN.h);
+    if (state.placeBuoy) {
+      ctx.strokeStyle = PALETTE.gold;
+      ctx.lineWidth = 3;
+      rr(ctx, BUOY_BTN.x, BUOY_BTN.y, BUOY_BTN.w, BUOY_BTN.h, 10);
+      ctx.stroke();
+    }
+    drawAnchorMark(BUOY_BTN.x + 24, BUOY_BTN.y + 24, 15, state.buoyStock > 0 ? '#7dd3fc' : 'rgba(247,241,222,0.4)');
+    text(ctx, `BUOY ×${state.buoyStock}`, BUOY_BTN.x + 42, BUOY_BTN.y + 24, 16, state.buoyStock > 0 ? PALETTE.cream : 'rgba(247,241,222,0.45)', 800);
+    if (state.boat.inChannel) text(ctx, 'IN CHANNEL +35%', BUOY_BTN.x + 75, BUOY_BTN.y + 48, 12, PALETTE.ok, 800, 'center');
+    else text(ctx, state.buoyStock > 0 ? '10c each' : 'NO BUOYS', BUOY_BTN.x + 75, BUOY_BTN.y + 48, 12, 'rgba(247,241,222,0.65)', 700, 'center');
     // Owned upgrades as small chips.
     state.owned.forEach((u, i) => {
-      panel(ctx, 590 + i * 92, 640, 84, 66);
-      text(ctx, u.icon, 632 + i * 92, 662, 20, PALETTE.gold, 800, 'center');
-      text(ctx, u.name, 632 + i * 92, 690, 10, PALETTE.cream, 700, 'center');
+      panel(ctx, 760 + i * 92, 640, 84, 66);
+      text(ctx, u.icon, 802 + i * 92, 662, 20, PALETTE.gold, 800, 'center');
+      text(ctx, u.name, 802 + i * 92, 690, 10, PALETTE.cream, 700, 'center');
     });
-    // Carried cargo reminder, anchored to the boat so it never hides an island.
+    // Carried cargo reminder, fixed at top-centre below the wind panel:
+    // anchoring it to the boat let it cover harbor labels (Luna vision pass).
+    // Top-centre is open sea, so it never hides an island or a crate.
     if (state.boat.cargo.length > 0) {
       const label = state.boat.cargo.map((c) => {
         const h = HARBORS.find((hh) => hh.id === c.harbor);
         return (c.gold ? '★' : c.fragile ? '!' : h.letter) + '→' + h.name;
       }).join('  ');
-      const px = clamp(state.boat.x - 165, 14, VIEW.width - 344);
-      const py = clamp(state.boat.y - 108, 222, VIEW.height - 44);
-      panel(ctx, px, py, 330, 34);
-      text(ctx, 'CARRYING: ' + label, px + 16, py + 18, 14, PALETTE.cream, 800);
+      panel(ctx, 475, 150, 330, 34);
+      text(ctx, 'CARRYING: ' + label, 491, 168, 14, PALETTE.cream, 800);
     }
     if (state.message) {
       ctx.globalAlpha = Math.min(1, state.messageTime * 2);
@@ -459,7 +576,8 @@ export function createRenderer(canvas) {
     text(ctx, 'Gold ★ crates pay triple — if you dare fetch them.', 640, 356, 16, PALETTE.gold, 700, 'center');
     text(ctx, 'Fragile ! crates pay double — but shatter if you hit a rock.', 640, 378, 16, '#cfe8ff', 700, 'center');
     text(ctx, 'Each day: 3 contracts — rush, gold, storm, fragile, chain.', 640, 400, 15, PALETTE.cream, 700, 'center');
-    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 434, 14, 'rgba(247,241,222,0.8)', 700, 'center');
+    text(ctx, 'Lay buoys (B) — your channel speeds the boat and calms storms.', 640, 418, 15, '#7dd3fc', 700, 'center');
+    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 442, 14, 'rgba(247,241,222,0.8)', 700, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
     text(ctx, '▶  PRESS ENTER OR CLICK TO SAIL', 640, 466, 20, PALETTE.cream, 800, 'center');
@@ -502,7 +620,7 @@ export function createRenderer(canvas) {
     text(ctx, `DAY ${state.daySpec.day} — ${state.delivered}/${state.daySpec.quota} CRATES`, 640, 272, 17, PALETTE.gold, 800, 'center');
     text(ctx, 'SCORE  ' + state.score, 640, 306, 30, PALETTE.cream, 800, 'center');
     text(ctx, `Deliveries ${state.stats.delivered}  ·  Gold crates ${state.stats.gold}  ·  Fragile ${state.stats.fragile}  ·  Contracts ${state.stats.contractsDone}`, 640, 348, 16, PALETTE.cream, 700, 'center');
-    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}  ·  Best chain ×${state.stats.bestChain}`, 640, 376, 16, PALETTE.cream, 700, 'center');
+    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}  ·  Buoys ${state.stats.buoysPlaced}  ·  Best chain ×${state.stats.bestChain}`, 640, 376, 16, PALETTE.cream, 700, 'center');
     if (state.score > state.best) text(ctx, '★ NEW BEST SCORE ★', 640, 406, 18, PALETTE.gold, 800, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
@@ -518,6 +636,7 @@ export function createRenderer(canvas) {
     drawCrates(state);
     drawStorms(state);
     drawGusts(state);
+    drawBuoys(state);
     drawBoat(state);
     drawGuide(state);
     drawParticles(state);
