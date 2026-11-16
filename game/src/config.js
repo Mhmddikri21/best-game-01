@@ -109,3 +109,23 @@ export const BUOY = {
 };
 
 export const BUOY_BTN = { x: 1116, y: 640, w: 150, h: 66 };
+
+// v4: rival mail-boats — the race layer. One rival on day 1, two from day 2.
+// Rivals sail the same sea, chase the same crates, and deliver them: first to
+// the crate wins it. They run a touch slower than a good player (no gusts,
+// no channel of their own), so the day stays winnable by playing well.
+// The race strip sits top-centre under the wind panel; its rect is shared by
+// render.js and main.js, so the two can never drift.
+export const RIVAL = {
+  baseSpeed: 118, // px per second at full wind help, before the per-rival factor
+  turnRate: 2.2,
+  pickupRadius: 30,
+  harborRadius: 64,
+};
+
+export const RIVAL_DEFS = [
+  { id: 'pip', name: 'PIP', color: '#ff5a5a', dark: '#a12727', speed: 0.84 },
+  { id: 'juno', name: 'JUNO', color: '#b07cff', dark: '#5b2ea6', speed: 0.78 },
+];
+
+export const RACE_STRIP = { x: 490, y: 106, w: 300, h: 34 };
