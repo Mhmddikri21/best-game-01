@@ -1,18 +1,20 @@
 // WINDWARD POST — a best-game-01 entry (Node 22, standard library only).
-// v3: the mail run grows a planning layer — placeable channel buoys. Press B
-// (or the BUOY button) and click the water to lay a buoy (3 a day, 10c each);
-// buoys near each other link into a glowing channel that speeds the boat +35%
-// and halves storm damage inside it. A CHANNEL contract and a BUOY KIT upgrade
-// track the new layer, on top of v2's contracts, fragile crates and escalating
-// days. The game is this directory's game/ folder: plain static files a
-// desktop browser loads offline (game/index.html and its ES modules, no library
-// and no network request).
+// v4: the mail run becomes a race — rival mail-boats PIP (day 1) and JUNO
+// (from day 2) chase the same crates and bank them at the harbors, first to
+// the crate wins it, tracked on a race scoreboard and an OUTRACE contract.
+// The v3 buoy channel is now impossible to miss: a wide glowing gold lane
+// with flowing dots, gold-ringed buoys, and a floating "+35% CHANNEL SPEED"
+// tag with speed streaks on the boat while it rides the channel. All of v3
+// stays (contracts, fragile crates, escalating days, BUOY KIT upgrade). The
+// game is this directory's game/ folder: plain static files a desktop browser
+// loads offline (game/index.html and its ES modules, no library and no
+// network request).
 // The program hands it in: it copies game/ and screenshots/ from beside this file to
 // /output and writes /output/dossier.json, the summary the judge reads, with the
 // vendored make.fun library.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Screenshot scenes live behind ?shot=title|play|place|end (see shots.json);
+// Screenshot scenes live behind ?shot=title|play|race|end (see shots.json);
 // each stages the real rules forward from a seeded world and draws once.
 // (?shot=upgrade still stages the between-days upgrade pick.)
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
