@@ -1,7 +1,7 @@
 // All canvas drawing: sea, islands, harbors, boat, storms, particles, HUD and screens.
 // Nothing here changes game state; it only reads it.
 
-import { BOAT, BUOY, BUOY_BTN, HARBORS, PALETTE, STORM, VIEW } from './config.js';
+import { BOAT, BUOY, BUOY_BTN, HARBORS, PALETTE, RACE_STRIP, STORM, VIEW } from './config.js';
 import { clamp } from './random.js';
 import { windName } from './wind.js';
 import { contractProgress } from './contracts.js';
@@ -288,29 +288,46 @@ export function createRenderer(canvas) {
   function drawBuoys(state) {
     const buoys = state.sea.buoys;
     if (!buoys) return;
-    // Channel links first (under the buoys): a glowing dashed lane between
-    // consecutive buoys close enough to link. Gold, not the route line's
-    // teal — the channel must read as its own thing (Luna vision pass).
+    // Channel links first (under the buoys): a glowing lane between
+    // consecutive buoys close enough to link. v4 makes it impossible to
+    // miss — a wide gold glow, a thick bright dashed core, and gold dots
+    // flowing along the lane, so the channel reads as a road, not a thread.
     for (const [a, b] of channelSegments(buoys)) {
       ctx.save();
-      ctx.strokeStyle = 'rgba(255, 200, 87, 0.16)';
-      ctx.lineWidth = 13;
+      ctx.strokeStyle = 'rgba(255, 200, 87, 0.22)';
+      ctx.lineWidth = 24;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
-      ctx.strokeStyle = 'rgba(255, 200, 87, 0.65)';
-      ctx.lineWidth = 4;
-      ctx.setLineDash([12, 9]);
-      ctx.lineDashOffset = -state.time * 22;
+      ctx.strokeStyle = 'rgba(255, 200, 87, 0.95)';
+      ctx.lineWidth = 7;
+      ctx.setLineDash([16, 10]);
+      ctx.lineDashOffset = -state.time * 34;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
+      ctx.setLineDash([]);
+      // Flowing gold dots ride the lane toward the far buoy.
+      for (let k = 0; k < 3; k += 1) {
+        const t = (state.time * 0.28 + k / 3) % 1;
+        const px = a.x + (b.x - a.x) * t;
+        const py = a.y + (b.y - a.y) * t;
+        ctx.fillStyle = 'rgba(255, 214, 110, 0.95)';
+        ctx.beginPath();
+        ctx.arc(px, py, 4.5, 0, TAU);
+        ctx.fill();
+      }
       ctx.restore();
     }
     for (const b of buoys.list) {
       const pulse = 1 + 0.12 * Math.sin(state.time * 3 + b.seed);
+      // Gold halo ties the buoy to its channel; the anchor stays sky-blue.
+      ctx.fillStyle = 'rgba(255, 200, 87, 0.25)';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 24 * pulse, 0, TAU);
+      ctx.fill();
       ctx.fillStyle = 'rgba(125, 211, 252, 0.22)';
       ctx.beginPath();
       ctx.arc(b.x, b.y, 20 * pulse, 0, TAU);
@@ -319,8 +336,8 @@ export function createRenderer(canvas) {
       ctx.beginPath();
       ctx.arc(b.x, b.y, 13, 0, TAU);
       ctx.fill();
-      ctx.strokeStyle = '#7dd3fc';
-      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#ffc857';
+      ctx.lineWidth = 3;
       ctx.stroke();
       drawAnchorMark(b.x, b.y, 13, '#7dd3fc');
     }
@@ -368,8 +385,111 @@ export function createRenderer(canvas) {
     }
   }
 
+  // v4: the rival mail-boats. Each is a real boat — hull, sail, wake, a
+  // name pill in its own color — plus a thin dashed line to what it is
+  // chasing, so the race reads at a glance: two boats, one crate.
+  function drawRivals(state) {
+    for (const r of state.rivals ?? []) {
+      // Intent line: dashed, in the rival's color, to its crate or harbor.
+      if (r.target) {
+        ctx.save();
+        ctx.strokeStyle = r.color;
+        ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 3;
+        ctx.setLineDash([8, 8]);
+        ctx.beginPath();
+        ctx.moveTo(r.x, r.y);
+        ctx.lineTo(r.target.x, r.target.y);
+        ctx.stroke();
+        ctx.restore();
+      }
+      // Wake.
+      for (const w of r.wake) {
+        ctx.fillStyle = `rgba(191, 232, 221, ${0.2 * w.life})`;
+        ctx.beginPath();
+        ctx.arc(w.x, w.y, 4 + (1 - w.life) * 7, 0, TAU);
+        ctx.fill();
+      }
+      ctx.save();
+      ctx.translate(r.x, r.y);
+      ctx.rotate(r.heading + Math.PI / 2);
+      ctx.scale(1.15, 1.15);
+      ctx.fillStyle = r.dark;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 13, 20, 0, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = r.color;
+      ctx.beginPath();
+      ctx.ellipse(0, -2, 10, 16, 0, 0, TAU);
+      ctx.fill();
+      ctx.rotate(r.lean * 0.22);
+      ctx.fillStyle = PALETTE.sail;
+      ctx.beginPath();
+      ctx.moveTo(0, -28);
+      ctx.lineTo(10, 8);
+      ctx.lineTo(-10, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#10222e';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, -30);
+      ctx.lineTo(0, 10);
+      ctx.stroke();
+      ctx.restore();
+      // Name pill above the boat, in the rival's color.
+      ctx.fillStyle = 'rgba(6, 20, 32, 0.85)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(r.x - 28, r.y - 62, 56, 20, 9); else ctx.rect(r.x - 28, r.y - 62, 56, 20);
+      ctx.fill();
+      ctx.strokeStyle = r.color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      text(ctx, r.name, r.x, r.y - 51, 12, r.color, 800, 'center');
+      // Cargo pip: the crate it is carrying, same badge language as the player.
+      if (r.cargo) {
+        const harbor = HARBORS.find((h) => h.id === r.cargo.harbor);
+        ctx.fillStyle = r.cargo.fragile ? '#cfe8ff' : harbor.color;
+        ctx.beginPath();
+        ctx.arc(r.x, r.y - 72, 7, 0, TAU);
+        ctx.fill();
+        text(ctx, r.cargo.gold ? '★' : r.cargo.fragile ? '!' : harbor.letter, r.x, r.y - 71, 10, '#10222e', 800, 'center');
+      }
+    }
+  }
+
   function drawBoat(state) {
     const b = state.boat;
+    // v4: inside your buoy channel the boat shows it — a pulsing gold ring,
+    // speed streaks behind the hull, and a floating speed tag above the
+    // cargo pips, so the +35% reads without reading any panel.
+    if (b.inChannel) {
+      ctx.strokeStyle = `rgba(255, 200, 87, ${0.45 + 0.2 * Math.sin(state.time * 6)})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, 30, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 214, 110, 0.75)';
+      ctx.lineWidth = 2.5;
+      for (let i = 0; i < 4; i += 1) {
+        const back = 30 + i * 13;
+        const side = (i % 2 === 0 ? 1 : -1) * (6 + i * 4);
+        const px = -Math.sin(b.heading) * side;
+        const py = Math.cos(b.heading) * side;
+        ctx.beginPath();
+        ctx.moveTo(b.x - Math.cos(b.heading) * back + px, b.y - Math.sin(b.heading) * back + py);
+        ctx.lineTo(b.x - Math.cos(b.heading) * (back + 18) + px, b.y - Math.sin(b.heading) * (back + 18) + py);
+        ctx.stroke();
+      }
+      // The tag sits BELOW the boat, not above it: above is where the cargo
+      // pips and the carry bar live, and the tag collided with both in the
+      // v4 screenshots. Below is open water with only the wake behind it.
+      ctx.fillStyle = 'rgba(6, 20, 32, 0.85)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(b.x - 88, b.y + 48, 176, 22, 10); else ctx.rect(b.x - 88, b.y + 48, 176, 22);
+      ctx.fill();
+      text(ctx, '+35% CHANNEL SPEED', b.x, b.y + 60, 13, PALETTE.gold, 800, 'center');
+    }
     // Wake.
     for (const w of b.wake) {
       ctx.fillStyle = `rgba(191, 232, 221, ${0.25 * w.life})`;
@@ -513,6 +633,19 @@ export function createRenderer(canvas) {
     ctx.fill();
     text(ctx, windName(wa), 690, 58, 18, PALETTE.cream, 800, 'center');
     text(ctx, 'CURRENT → ' + windName(state.wind.currentAngle), 640, 84, 13, 'rgba(247,241,222,0.8)', 700, 'center');
+    // v4: the race strip — top-centre under the wind panel, so the standings
+    // are visible in every play frame: YOU vs each rival, deliveries today.
+    panel(ctx, RACE_STRIP.x, RACE_STRIP.y, RACE_STRIP.w, RACE_STRIP.h);
+    text(ctx, 'RACE', RACE_STRIP.x + 16, RACE_STRIP.y + 18, 13, 'rgba(247,241,222,0.65)', 700);
+    {
+      const entries = [['YOU', state.delivered, PALETTE.cream]];
+      for (const r of state.rivals) entries.push([r.name, state.race.rivals[r.id] ?? 0, r.color]);
+      const n = entries.length;
+      entries.forEach(([name, count, color], i) => {
+        const cx = RACE_STRIP.x + 80 + (i + 0.5) * (200 / n);
+        text(ctx, `${name} ${count}`, cx, RACE_STRIP.y + 18, 14, color, 800, 'center');
+      });
+    }
     // Top-right: score, tips, hull, gust.
     panel(ctx, 966, 12, 300, 86);
     text(ctx, 'SCORE', 980, 32, 13, 'rgba(247,241,222,0.65)', 700);
@@ -530,7 +663,7 @@ export function createRenderer(canvas) {
     // v3: the BUOY button — stock and cost live here, not in another panel.
     // Clicking it (or B) toggles buoy-place mode; it lights up while placing.
     panel(ctx, BUOY_BTN.x, BUOY_BTN.y, BUOY_BTN.w, BUOY_BTN.h);
-    if (state.placeBuoy) {
+    if (state.placeBuoy || state.boat.inChannel) {
       ctx.strokeStyle = PALETTE.gold;
       ctx.lineWidth = 3;
       rr(ctx, BUOY_BTN.x, BUOY_BTN.y, BUOY_BTN.w, BUOY_BTN.h, 10);
@@ -538,7 +671,7 @@ export function createRenderer(canvas) {
     }
     drawAnchorMark(BUOY_BTN.x + 24, BUOY_BTN.y + 24, 15, state.buoyStock > 0 ? '#7dd3fc' : 'rgba(247,241,222,0.4)');
     text(ctx, `BUOY ×${state.buoyStock}`, BUOY_BTN.x + 42, BUOY_BTN.y + 24, 16, state.buoyStock > 0 ? PALETTE.cream : 'rgba(247,241,222,0.45)', 800);
-    if (state.boat.inChannel) text(ctx, 'IN CHANNEL +35%', BUOY_BTN.x + 75, BUOY_BTN.y + 48, 12, PALETTE.ok, 800, 'center');
+    if (state.boat.inChannel) text(ctx, 'IN CHANNEL +35%', BUOY_BTN.x + 75, BUOY_BTN.y + 48, 13, PALETTE.gold, 800, 'center');
     else text(ctx, state.buoyStock > 0 ? '10c each' : 'NO BUOYS', BUOY_BTN.x + 75, BUOY_BTN.y + 48, 12, 'rgba(247,241,222,0.65)', 700, 'center');
     // Owned upgrades as small chips.
     state.owned.forEach((u, i) => {
@@ -567,7 +700,7 @@ export function createRenderer(canvas) {
   function drawTitle(state) {
     ctx.fillStyle = 'rgba(6, 20, 30, 0.55)';
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-    panel(ctx, 340, 120, 600, 400);
+    panel(ctx, 340, 110, 600, 430);
     text(ctx, 'WINDWARD POST', 640, 195, 52, PALETTE.cream, 800, 'center');
     text(ctx, 'a mail run against the wind', 640, 238, 20, PALETTE.gold, 700, 'center');
     text(ctx, 'Pick up crates at sea. Each crate is marked with a letter —', 640, 288, 16, PALETTE.cream, 700, 'center');
@@ -576,13 +709,14 @@ export function createRenderer(canvas) {
     text(ctx, 'Gold ★ crates pay triple — if you dare fetch them.', 640, 356, 16, PALETTE.gold, 700, 'center');
     text(ctx, 'Fragile ! crates pay double — but shatter if you hit a rock.', 640, 378, 16, '#cfe8ff', 700, 'center');
     text(ctx, 'Each day: 3 contracts — rush, gold, storm, fragile, chain.', 640, 400, 15, PALETTE.cream, 700, 'center');
-    text(ctx, 'Lay buoys (B) — your channel speeds the boat and calms storms.', 640, 418, 15, '#7dd3fc', 700, 'center');
-    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 442, 14, 'rgba(247,241,222,0.8)', 700, 'center');
+    text(ctx, 'Lay buoys (B) — build a glowing gold channel: +35% speed, storms half as bad.', 640, 418, 15, '#7dd3fc', 700, 'center');
+    text(ctx, 'Race rival mail-boats PIP and JUNO — first to the crate wins it.', 640, 436, 15, '#ff9d9d', 700, 'center');
+    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 460, 14, 'rgba(247,241,222,0.8)', 700, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
-    text(ctx, '▶  PRESS ENTER OR CLICK TO SAIL', 640, 466, 20, PALETTE.cream, 800, 'center');
+    text(ctx, '▶  PRESS ENTER OR CLICK TO SAIL', 640, 486, 20, PALETTE.cream, 800, 'center');
     ctx.globalAlpha = 1;
-    if (state.best > 0) text(ctx, 'BEST SCORE ' + state.best, 640, 496, 15, PALETTE.gold, 700, 'center');
+    if (state.best > 0) text(ctx, 'BEST SCORE ' + state.best, 640, 512, 15, PALETTE.gold, 700, 'center');
   }
 
   function drawPause(state) {
@@ -592,39 +726,69 @@ export function createRenderer(canvas) {
     text(ctx, 'P / ESC to resume    ·    R to restart the day', 640, 380, 17, PALETTE.cream, 700, 'center');
   }
 
+  function raceLine(state, totals) {
+    // "RACE — YOU 5 · PIP 3 · JUNO 2" for today (totals=false) or the run.
+    const you = totals ? state.raceTotal.you : state.delivered;
+    const counts = totals ? state.raceTotal.rivals : state.race.rivals;
+    const parts = [`YOU ${you}`];
+    for (const r of state.rivals) parts.push(`${r.name} ${counts[r.id] ?? 0}`);
+    return parts.join('  ·  ');
+  }
+
+  function raceLeader(state, totals) {
+    const you = totals ? state.raceTotal.you : state.delivered;
+    const counts = totals ? state.raceTotal.rivals : state.race.rivals;
+    let leader = 'YOU';
+    let best = you;
+    let tied = false;
+    for (const r of state.rivals) {
+      const c = counts[r.id] ?? 0;
+      if (c > best) { best = c; leader = r.name; tied = false; }
+      else if (c === best && leader !== r.name) tied = true;
+    }
+    if (tied) return 'TIED AT THE TOP';
+    return leader === 'YOU' ? 'YOU LEAD THE RACE' : `${leader} LEADS THE RACE`;
+  }
+
   function drawDayClear(state) {
     ctx.fillStyle = 'rgba(6, 20, 30, 0.62)';
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-    panel(ctx, 290, 130, 700, 420);
+    panel(ctx, 290, 130, 700, 440);
     text(ctx, `DAY ${state.daySpec.day} CLEAR!`, 640, 178, 40, PALETTE.gold, 800, 'center');
     text(ctx, `Deliveries ${state.delivered}/${state.daySpec.quota}  ·  Score ${state.score}  ·  +${250} day bonus`, 640, 222, 17, PALETTE.cream, 700, 'center');
     const doneCount = state.contracts.filter((c) => c.done).length;
     text(ctx, `Contracts ${doneCount}/3 done  ·  +${state.contractRewards} contract bonus`, 640, 248, 16, doneCount > 0 ? PALETTE.ok : 'rgba(247,241,222,0.75)', 700, 'center');
-    text(ctx, 'CHOOSE ONE UPGRADE FOR TOMORROW', 640, 284, 16, PALETTE.cream, 800, 'center');
+    // v4: the day's race result, right under the contracts — the rivalry is
+    // part of the day's story, not an afterthought.
+    text(ctx, `RACE TODAY — ${raceLine(state, false)}  ·  ${raceLeader(state, false)}`, 640, 274, 16, PALETTE.cream, 800, 'center');
+    text(ctx, 'CHOOSE ONE UPGRADE FOR TOMORROW', 640, 308, 16, PALETTE.cream, 800, 'center');
     state.offers.forEach((u, i) => {
       const x = 330 + i * 220;
-      panel(ctx, x, 310, 200, 150);
-      text(ctx, u.icon, x + 100, 330, 34, PALETTE.gold, 800, 'center');
-      text(ctx, `[${i + 1}] ${u.name}`, x + 100, 372, 16, PALETTE.cream, 800, 'center');
-      text(ctx, u.desc, x + 100, 400, 14, 'rgba(247,241,222,0.8)', 700, 'center');
+      panel(ctx, x, 330, 200, 150);
+      text(ctx, u.icon, x + 100, 350, 34, PALETTE.gold, 800, 'center');
+      text(ctx, `[${i + 1}] ${u.name}`, x + 100, 392, 16, PALETTE.cream, 800, 'center');
+      text(ctx, u.desc, x + 100, 420, 14, 'rgba(247,241,222,0.8)', 700, 'center');
     });
-    text(ctx, 'Click a card or press 1 / 2 / 3', 640, 480, 15, 'rgba(247,241,222,0.75)', 700, 'center');
+    text(ctx, 'Click a card or press 1 / 2 / 3', 640, 502, 15, 'rgba(247,241,222,0.75)', 700, 'center');
   }
 
   function drawEnd(state, won) {
     ctx.fillStyle = 'rgba(6, 20, 30, 0.66)';
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-    panel(ctx, 330, 140, 620, 380);
-    text(ctx, won ? 'ALL MAIL DELIVERED!' : 'THE POST FAILS…', 640, 200, 40, won ? PALETTE.gold : PALETTE.danger, 800, 'center');
-    text(ctx, won ? 'Every crate home. The harbors cheer your name.' : state.loseReason, 640, 246, 17, PALETTE.cream, 700, 'center');
-    text(ctx, `DAY ${state.daySpec.day} — ${state.delivered}/${state.daySpec.quota} CRATES`, 640, 272, 17, PALETTE.gold, 800, 'center');
-    text(ctx, 'SCORE  ' + state.score, 640, 306, 30, PALETTE.cream, 800, 'center');
-    text(ctx, `Deliveries ${state.stats.delivered}  ·  Gold crates ${state.stats.gold}  ·  Fragile ${state.stats.fragile}  ·  Contracts ${state.stats.contractsDone}`, 640, 348, 16, PALETTE.cream, 700, 'center');
-    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}  ·  Buoys ${state.stats.buoysPlaced}  ·  Best chain ×${state.stats.bestChain}`, 640, 376, 16, PALETTE.cream, 700, 'center');
-    if (state.score > state.best) text(ctx, '★ NEW BEST SCORE ★', 640, 406, 18, PALETTE.gold, 800, 'center');
+    panel(ctx, 330, 130, 620, 400);
+    text(ctx, won ? 'ALL MAIL DELIVERED!' : 'THE POST FAILS…', 640, 192, 40, won ? PALETTE.gold : PALETTE.danger, 800, 'center');
+    text(ctx, won ? 'Every crate home. The harbors cheer your name.' : state.loseReason, 640, 238, 17, PALETTE.cream, 700, 'center');
+    text(ctx, `DAY ${state.daySpec.day} — ${state.delivered}/${state.daySpec.quota} CRATES`, 640, 264, 17, PALETTE.gold, 800, 'center');
+    text(ctx, 'SCORE  ' + state.score, 640, 298, 30, PALETTE.cream, 800, 'center');
+    text(ctx, `Deliveries ${state.stats.delivered}  ·  Gold crates ${state.stats.gold}  ·  Fragile ${state.stats.fragile}  ·  Contracts ${state.stats.contractsDone}`, 640, 340, 16, PALETTE.cream, 700, 'center');
+    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}  ·  Buoys ${state.stats.buoysPlaced}  ·  Best chain ×${state.stats.bestChain}`, 640, 368, 16, PALETTE.cream, 700, 'center');
+    // v4: the run's race result — who actually won the three-day race.
+    text(ctx, `RACE — ${raceLine(state, true)}`, 640, 396, 16, PALETTE.cream, 800, 'center');
+    text(ctx, raceLeader(state, true), 640, 424, 16, raceLeader(state, true).startsWith('YOU') ? PALETTE.gold : PALETTE.danger, 800, 'center');
+    if (state.score > state.best) text(ctx, '★ NEW BEST SCORE ★', 640, 452, 18, PALETTE.gold, 800, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
-    text(ctx, '▶  PRESS R OR ENTER TO SAIL AGAIN', 640, 452, 19, PALETTE.cream, 800, 'center');
+    text(ctx, '▶  PRESS R OR ENTER TO SAIL AGAIN', 640, 488, 19, PALETTE.cream, 800, 'center');
     ctx.globalAlpha = 1;
   }
 
@@ -637,6 +801,7 @@ export function createRenderer(canvas) {
     drawStorms(state);
     drawGusts(state);
     drawBuoys(state);
+    drawRivals(state);
     drawBoat(state);
     drawGuide(state);
     drawParticles(state);
