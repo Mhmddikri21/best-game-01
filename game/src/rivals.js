@@ -89,6 +89,16 @@ export function stepRivals(state, dt, fx) {
         want = Math.atan2(r.y - storm.item.y, r.x - storm.item.x);
       }
     }
+    // v5: rivals flee the MAELSTROM too — it hunts the player, but nobody
+    // sails into a boss storm on purpose.
+    const mael = state.sea.maelstrom;
+    if (mael && Math.hypot(r.x - mael.x, r.y - mael.y) < mael.r + 80) {
+      const toTarget = Math.atan2(r.target.y - r.y, r.target.x - r.x);
+      const toMael = Math.atan2(mael.y - r.y, mael.x - r.x);
+      if (Math.abs(angleDiff(toTarget, toMael)) < Math.PI / 2) {
+        want = Math.atan2(r.y - mael.y, r.x - mael.x);
+      }
+    }
     const diff = angleDiff(r.heading, want);
     r.heading += clamp(diff, -RIVAL.turnRate * dt, RIVAL.turnRate * dt);
     r.lean = clamp(r.lean + (clamp(diff, -1, 1) * 0.9 - r.lean) * dt * 6, -1, 1);
