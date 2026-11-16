@@ -26,6 +26,8 @@ export function createSea(rng, daySpec) {
     })),
     crates: [],
     storms: [],
+    // v5: the boss storm lives apart from the drifting cells — it chases.
+    maelstrom: null,
     buoys: { list: [] },
     crateTimer: 0,
   };
@@ -94,4 +96,18 @@ export function stepSea(sea, dt, rng, daySpec) {
 
 export function harborById(sea, id) {
   return sea.harbors.find((h) => h.id === id);
+}
+
+/**
+ * v5: a new wave spawns one more storm, faster than the last wave's.
+ * Wave 1's storms are the ones createSea laid down; waves 2 and 3 add one each.
+ */
+export function spawnWaveStorm(sea, rng, daySpec, wave) {
+  sea.storms.push({
+    x: range(rng, 300, VIEW.width - 300),
+    y: range(rng, 180, VIEW.height - 180),
+    angle: range(rng, 0, Math.PI * 2),
+    speed: (daySpec.stormSpeed ?? STORM.driftSpeed) * (1 + 0.12 * (wave - 1)),
+    flicker: rng(),
+  });
 }
