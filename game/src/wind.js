@@ -5,9 +5,11 @@
 import { CURRENT, STORM, VIEW, WIND } from './config.js';
 import { angleDiff, clamp, pick, range } from './random.js';
 
-export function createWind(rng) {
+export function createWind(rng, dayIndex = 0) {
   const wind = {
     angle: range(rng, 0, Math.PI * 2),
+    // The wind veers faster on later days — the compass visibly swings more.
+    veer: WIND.turnPerSec * (1 + 0.6 * dayIndex),
     gusts: [],
     gustTimer: 2,
     currentAngle: range(rng, 0, Math.PI * 2),
@@ -18,7 +20,7 @@ export function createWind(rng) {
 
 export function stepWind(wind, dt, rng) {
   wind.time += dt;
-  wind.angle += WIND.turnPerSec * dt;
+  wind.angle += (wind.veer ?? WIND.turnPerSec) * dt;
   wind.currentAngle += CURRENT.turnPerSec * dt;
   wind.gustTimer -= dt;
   if (wind.gustTimer <= 0) {
