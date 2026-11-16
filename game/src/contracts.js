@@ -12,12 +12,19 @@ export const CONTRACT_DEFS = [
   { id: 'buoys', name: 'CHANNEL', desc: 'Lay 2 buoys in one day', reward: 150, target: 2 },
   // v4: the race contract — lead the best rival by 2 deliveries in the day.
   { id: 'outrace', name: 'OUTRACE', desc: 'Lead the best rival by 2', reward: 200, target: 2 },
+  // v5: the boss contract — outlast the Maelstrom's 20-second hunt. Day 3 only,
+  // and always on the board that day so the hunt reads as the day's goal.
+  { id: 'maelstrom', name: 'BEAT MAELSTROM', desc: 'Outlast the Maelstrom 20s', reward: 250, target: 20 }, // v5: short name so it never touches the timer at the panel's right edge
 ];
 
 /** Three distinct contracts for the day, shuffled with the run's rng. */
-export function buildContracts(rng) {
-  const pool = [...CONTRACT_DEFS];
+export function buildContracts(rng, dayIndex = 0) {
+  const pool = CONTRACT_DEFS.filter((d) => d.id !== 'maelstrom');
   const picks = [];
+  // v5: on day 3 the boss contract is always on the board, then two more.
+  if (dayIndex === 2) {
+    picks.push(CONTRACT_DEFS.find((d) => d.id === 'maelstrom'));
+  }
   while (picks.length < 3 && pool.length > 0) {
     picks.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   }
@@ -82,6 +89,34 @@ export function onStorm(state, dt) {
   return done;
 }
 
+/** The Maelstrom is hunting: survival time accrues toward the 20s target. */
+export function onMaelstrom(state, dt) {
+  const done = [];
+  for (const c of state.contracts) {
+    if (c.done || c.id !== 'maelstrom') continue;
+    c.progress = Math.min(c.target, c.progress + dt);
+    const f = finish(state, c);
+    if (f) done.push(f);
+  }
+  return done;
+}
+
+/**
+ * The day ended with the quota met while the Maelstrom still hunted: if it
+ * hunted for a real stretch (> 5s), that counts as surviving it — the hunt
+ * is over because the run is won, not because the boat fled. Returns the
+ * finished contract, or null when there is nothing to finish.
+ */
+export function forceCompleteMaelstrom(state) {
+  for (const c of state.contracts) {
+    if (c.done || c.id !== 'maelstrom') continue;
+    c.progress = c.target;
+    const f = finish(state, c);
+    return f;
+  }
+  return null;
+}
+
 /** A buoy was just laid: the CHANNEL contract tracks placements. */
 export function onBuoy(state) {
   const done = [];
@@ -104,6 +139,6 @@ export function onRock(state) {
 
 /** Short progress string for the HUD, e.g. "1/2" or "1s/2s". */
 export function contractProgress(c) {
-  if (c.id === 'storm') return `${Math.min(c.target, Math.floor(c.progress))}s/${c.target}s`;
+  if (c.id === 'storm' || c.id === 'maelstrom') return `${Math.min(c.target, Math.floor(c.progress))}s/${c.target}s`;
   return `${Math.min(c.target, c.progress)}/${c.target}`;
 }
