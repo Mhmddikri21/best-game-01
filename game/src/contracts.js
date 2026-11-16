@@ -10,6 +10,8 @@ export const CONTRACT_DEFS = [
   { id: 'fragile', name: 'FRAGILE', desc: 'Deliver 1 fragile ! crate intact', reward: 200, target: 1 },
   { id: 'chain', name: 'CHAIN x3', desc: 'Deliver 3 crates, no rock hit', reward: 150, target: 3 },
   { id: 'buoys', name: 'CHANNEL', desc: 'Lay 2 buoys in one day', reward: 150, target: 2 },
+  // v4: the race contract — lead the best rival by 2 deliveries in the day.
+  { id: 'outrace', name: 'OUTRACE', desc: 'Lead the best rival by 2', reward: 200, target: 2 },
 ];
 
 /** Three distinct contracts for the day, shuffled with the run's rng. */
@@ -30,6 +32,21 @@ function finish(state, contract) {
   return contract;
 }
 
+/** How far the player leads the best rival today (never below 0). */
+export function raceLead(state) {
+  const best = Math.max(0, ...Object.values(state.race.rivals));
+  return Math.max(0, state.delivered - best);
+}
+
+function refreshOutrace(state, done) {
+  for (const c of state.contracts) {
+    if (c.done || c.id !== 'outrace') continue;
+    c.progress = raceLead(state);
+    const f = finish(state, c);
+    if (f) done.push(f);
+  }
+}
+
 /** A delivery just happened. `elapsedSec` is seconds since the day began. */
 export function onDelivery(state, crate, elapsedSec) {
   const done = [];
@@ -42,6 +59,14 @@ export function onDelivery(state, crate, elapsedSec) {
     const f = finish(state, c);
     if (f) done.push(f);
   }
+  refreshOutrace(state, done);
+  return done;
+}
+
+/** A rival just banked a crate: the OUTRACE lead can shrink. */
+export function onRivalDelivery(state) {
+  const done = [];
+  refreshOutrace(state, done);
   return done;
 }
 
