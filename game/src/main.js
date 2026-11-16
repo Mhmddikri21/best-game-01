@@ -1,7 +1,7 @@
 // WINDWARD POST — game loop, screens and rules.
 // Owns the state; render.js only draws it, boat.js/sea.js/wind.js only step it.
 
-import { BOAT, DAYS, GUST, SCORE, VIEW } from './config.js';
+import { BOAT, BUOY, BUOY_BTN, DAYS, GUST, SCORE, VIEW } from './config.js';
 import { clamp, makeRng } from './random.js';
 import { createAudio } from './audio.js';
 import { createBoat, rockHit, stepBoat } from './boat.js';
@@ -11,6 +11,7 @@ import { createInput } from './input.js';
 import { createWind, stepWind, stormAt } from './wind.js';
 import { offerUpgrades } from './upgrades.js';
 import { buildContracts, onDelivery, onRock, onStorm } from './contracts.js';
+import { inChannel, placeBuoy as layBuoy, placementProblem } from './buoys.js';
 import { stageShot } from './shots.js';
 
 const STEP = 1 / 60;
@@ -59,7 +60,10 @@ export function createGame(canvas, seed) {
       contracts: [],
       contractRewards: 0,
       chainStreak: 0,
-      stats: { delivered: 0, gold: 0, fragile: 0, contractsDone: 0, crashes: 0, bestChain: 1 },
+      buoyStock: BUOY.stockPerDay,
+      placeBuoy: false,
+      placeGhost: null,
+      stats: { delivered: 0, gold: 0, fragile: 0, contractsDone: 0, crashes: 0, bestChain: 1, buoysPlaced: 0 },
       wind: createWind(rng),
       sea: createSea(rng, DAYS[0]),
       boat: createBoat({}),
@@ -78,6 +82,11 @@ export function createGame(canvas, seed) {
     s.wind.veer = s.daySpec.veer;
     s.sea = createSea(rng, s.daySpec);
     const keep = { ...s.upgradeMods };
+    // v3: fresh buoy stock each day (plus any BUOY KIT bonus); yesterday's
+    // channel is gone with the old sea — every day plans its own route.
+    s.buoyStock = BUOY.stockPerDay + (keep.buoyBonus ?? 0);
+    s.placeBuoy = false;
+    s.placeGhost = null;
     s.boat = createBoat(keep);
     s.boat.gustMax = keep.gustMax ?? GUST.max;
     s.boat.gust = s.boat.gustMax;
@@ -175,6 +184,39 @@ export function createGame(canvas, seed) {
 
   function stepPlay(dt, input) {
     const s = game.state;
+    // v3: buoy placement mode. B or the BUOY button toggles it; while it is on,
+    // a map click lays a buoy instead of steering, and the ghost follows the
+    // mouse so the mode is unmistakable. Stock running out exits the mode.
+    if (input.wasPressed('KeyB')) {
+      s.placeBuoy = !s.placeBuoy;
+      s.message = s.placeBuoy ? 'BUOY MODE — CLICK THE WATER TO LAY A BUOY' : 'BUOY MODE OFF';
+      s.messageTime = 1.6;
+      audio.click();
+    }
+    if (s.placeBuoy) s.placeGhost = { ...input.mouse };
+    if (input.waypoint) {
+      const m = input.mouse;
+      if (m.x >= BUOY_BTN.x && m.x <= BUOY_BTN.x + BUOY_BTN.w && m.y >= BUOY_BTN.y && m.y <= BUOY_BTN.y + BUOY_BTN.h) {
+        s.placeBuoy = !s.placeBuoy;
+        s.message = s.placeBuoy ? 'BUOY MODE — CLICK THE WATER TO LAY A BUOY' : 'BUOY MODE OFF';
+        s.messageTime = 1.6;
+        audio.click();
+        input.clearWaypoint();
+      } else if (s.placeBuoy) {
+        const res = layBuoy(s, input.waypoint.x, input.waypoint.y);
+        if (res.ok) {
+          completeContracts(res.done);
+          audio.pickup();
+          s.message = `BUOY LAID — ${s.buoyStock} LEFT TODAY`;
+          s.messageTime = 1.4;
+          if (s.buoyStock <= 0) s.placeBuoy = false;
+        } else {
+          s.message = res.reason;
+          s.messageTime = 1.6;
+        }
+        input.clearWaypoint();
+      }
+    }
     stepWind(s.wind, dt, rng);
     stepSea(s.sea, dt, rng, s.daySpec);
     const events = [];
@@ -204,10 +246,12 @@ export function createGame(canvas, seed) {
     for (const r of s.sea.rocks) {
       if (rockHit(s.boat, r)) { rockCrashFX(); break; }
     }
-    // Storms: damage over time while inside.
+    // Storms: damage over time while inside. The channel shelters the boat:
+    // storm damage is halved while the boat sails inside its own buoys.
     const storm = stormAt(s.sea.storms, s.boat.x, s.boat.y);
     if (storm) {
-      const rate = s.upgradeMods.stormShield ? 0.5 : 1;
+      let rate = s.upgradeMods.stormShield ? 0.5 : 1;
+      if (s.boat.inChannel) rate *= BUOY.stormShelter;
       s.boat.hull -= BOAT.stormDamagePerSec * rate * dt;
       completeContracts(onStorm(s, dt));
       if (s.chain > 1 && rng() < dt * 2) s.chain = 1;
@@ -309,6 +353,15 @@ export function createGame(canvas, seed) {
     startDay,
     stepDemo,
     resetRun,
+    // Shared placement entry point: the click path, the autopilot probe and the
+    // screenshot staging all lay buoys through this, so a staged buoy is real.
+    placeBuoy(x, y) {
+      const res = layBuoy(game.state, x, y);
+      if (res.ok) completeContracts(res.done);
+      return res;
+    },
+    placementProblem(x, y) { return placementProblem(game.state, x, y); },
+    inChannel(x, y) { return inChannel(game.state.sea.buoys, x, y); },
     get rng() { return rng; },
   };
 }
