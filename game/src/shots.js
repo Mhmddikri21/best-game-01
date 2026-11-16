@@ -83,14 +83,40 @@ function runSteps(game, input, seconds, until, allowStart = true) {
   }
 }
 
+/** Lay up to `n` buoys from the boat toward its current target (crate or
+ * harbor), spaced to link into a channel. Uses the real placement path, so a
+ * staged channel is a real channel. Spots that fail validation are nudged. */
+function layChannel(game, n = 3) {
+  const s = game.state;
+  const b = s.boat;
+  const target = b.cargo.length > 0
+    ? harborById(s.sea, b.cargo[0].harbor)
+    : (s.sea.crates[0] ?? { x: 640, y: 360 });
+  const a = Math.atan2(target.y - b.y, target.x - b.x);
+  for (let i = 0; i < n; i += 1) {
+    const dist = 90 + i * 190;
+    let placed = false;
+    for (const [dx, dy] of [[0, 0], [0, -70], [0, 70], [-70, 0], [70, 0], [0, -140], [0, 140]]) {
+      const x = clamp(b.x + Math.cos(a) * dist + dx, 60, 1220);
+      const y = clamp(b.y + Math.sin(a) * dist + dy, 60, 660);
+      if (game.placeBuoy(x, y).ok) { placed = true; break; }
+    }
+    if (!placed) break;
+  }
+}
+
 export function stageShot(name, game) {
   const input = makeVirtualInput();
   game.resetRun();
   if (name === 'play') {
-    // Day 2, mid-run: three storms, extra rocks, contracts ticking, boat carrying.
+    // Day 2, mid-run: three storms, extra rocks, contracts ticking, boat carrying
+    // — and a buoy channel laid along its route, so the v3 layer reads in play.
     input.press('Enter');
     game.step(STEP, input);
     game.startDay(1);
+    game.state.tips = 60;
+    runSteps(game, input, 6);
+    layChannel(game);
     runSteps(game, input, 45, (g) => {
       const s = g.state;
       if (s.screen !== 'play') return true;
@@ -99,6 +125,41 @@ export function stageShot(name, game) {
       const h = harborById(s.sea, s.boat.cargo[0].harbor);
       return Math.hypot(s.boat.x - h.x, s.boat.y - h.y) > 200;
     });
+    return;
+  }
+  if (name === 'place') {
+    // The v3 decision moment: two buoys already linked into a channel, the
+    // boat carrying a crate mid-route, place mode ON with the ghost extending
+    // the channel toward the next leg. Everything staged is real game state.
+    input.press('Enter');
+    game.step(STEP, input);
+    game.startDay(1);
+    game.state.tips = 60;
+    runSteps(game, input, 6);
+    layChannel(game, 2);
+    runSteps(game, input, 30, (g) => {
+      const s2 = g.state;
+      if (s2.screen !== 'play') return true;
+      if (s2.boat.cargo.length === 0) return false;
+      if (s2.daySpec.seconds - s2.timeLeft < 12) return false;
+      const h2 = harborById(s2.sea, s2.boat.cargo[0].harbor);
+      return Math.hypot(s2.boat.x - h2.x, s2.boat.y - h2.y) > 200;
+    });
+    const s3 = game.state;
+    if (s3.screen === 'play') {
+      const target = s3.boat.cargo.length > 0
+        ? harborById(s3.sea, s3.boat.cargo[0].harbor)
+        : { x: 640, y: 360 };
+      const last = s3.sea.buoys.list[s3.sea.buoys.list.length - 1] ?? { x: s3.boat.x, y: s3.boat.y };
+      const a = Math.atan2(target.y - last.y, target.x - last.x);
+      const ghost = {
+        x: clamp(last.x + Math.cos(a) * 190, 60, 1220),
+        y: clamp(last.y + Math.sin(a) * 190, 60, 660),
+      };
+      s3.placeBuoy = true;
+      s3.placeGhost = ghost;
+      input.mouse = { ...ghost };
+    }
     return;
   }
   if (name === 'upgrade') {
@@ -128,6 +189,9 @@ export function stageShot(name, game) {
       born: 0,
     }];
     runSteps(game, input, 150, (g) => g.state.delivered >= 3);
+    // Lay a couple of buoys with the delivery tips before sunset, so the win
+    // screen's buoy count — and the sea behind it — shows the v3 layer too.
+    layChannel(game, 2);
     // Freeze the count: no more pickups or deliveries while sunset runs out.
     game.state.boat.cargo = [];
     game.state.sea.crates = [];
