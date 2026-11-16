@@ -35,6 +35,10 @@ export const UPGRADES = [
     id: 'canvas', name: 'STORM CANVAS', desc: 'Storm damage halved', icon: '☂',
     apply: (u) => { u.stormShield = true; },
   },
+  {
+    id: 'buoys', name: 'BUOY KIT', desc: '+2 buoys a day', icon: '⚓',
+    apply: (u) => { u.buoyBonus = (u.buoyBonus ?? 0) + 2; },
+  },
 ];
 
 /** Three distinct upgrades the player does not own yet (or repeats if the pool runs out). */
