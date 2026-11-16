@@ -9,6 +9,7 @@ export const CONTRACT_DEFS = [
   { id: 'storm', name: 'STORM RUN', desc: 'Ride inside a storm for 2s', reward: 150, target: 2 },
   { id: 'fragile', name: 'FRAGILE', desc: 'Deliver 1 fragile ! crate intact', reward: 200, target: 1 },
   { id: 'chain', name: 'CHAIN x3', desc: 'Deliver 3 crates, no rock hit', reward: 150, target: 3 },
+  { id: 'buoys', name: 'CHANNEL', desc: 'Lay 2 buoys in one day', reward: 150, target: 2 },
 ];
 
 /** Three distinct contracts for the day, shuffled with the run's rng. */
@@ -50,6 +51,18 @@ export function onStorm(state, dt) {
   for (const c of state.contracts) {
     if (c.done || c.id !== 'storm') continue;
     c.progress = Math.min(c.target, c.progress + dt);
+    const f = finish(state, c);
+    if (f) done.push(f);
+  }
+  return done;
+}
+
+/** A buoy was just laid: the CHANNEL contract tracks placements. */
+export function onBuoy(state) {
+  const done = [];
+  for (const c of state.contracts) {
+    if (c.done || c.id !== 'buoys') continue;
+    c.progress += 1;
     const f = finish(state, c);
     if (f) done.push(f);
   }
