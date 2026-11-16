@@ -6,6 +6,9 @@ export const VIEW = { width: 1280, height: 720 };
 export const PALETTE = {
   seaDeep: '#0a2c3a',
   seaShallow: '#0f4256',
+  // v5: nightfall — day 3 darkens so the lantern glow and gold channel pop.
+  seaDeepNight: '#06121f',
+  seaShallowNight: '#0a2436',
   seaFoam: '#bfe8dd',
   sand: '#d9b380',
   sandDark: '#b98f5e',
@@ -16,7 +19,7 @@ export const PALETTE = {
   sail: '#f7f1de',
   sailShade: '#e3d5ae',
   ink: '#10222e',
-  panel: 'rgba(8, 28, 40, 0.82)',
+  panel: 'rgba(8, 28, 40, 0.95)', // near-opaque: floater text behind a panel ghosted through at 0.82
   panelLine: 'rgba(191, 232, 221, 0.35)',
   cream: '#f7f1de',
   gold: '#ffc857',
@@ -129,3 +132,20 @@ export const RIVAL_DEFS = [
 ];
 
 export const RACE_STRIP = { x: 490, y: 106, w: 300, h: 34 };
+
+// v5: storm waves + the MAELSTROM boss storm. Each day runs in 3 waves;
+// every new wave spawns another storm, faster than the last. On day 3's
+// final wave one huge cell wakes and hunts the player's boat. It is
+// beatable on purpose: the boat is faster downwind, the buoy channel halves
+// its damage, and a gust burst breaks the chase. Survive 20s for +250.
+export const WAVES_PER_DAY = 3;
+
+export const MAELSTROM = {
+  radius: 130, // ~1.7x a normal storm cell — big, but escapable
+  speed: 60, // a fleeing boat outruns it except dead upwind; ignoring it still gets you caught
+  damagePerSec: 8, // ~12s inside to sink at full hull (25s inside the channel)
+  surviveSec: 20,
+  bonus: 250,
+};
+
+export const MAELSTROM_BAR = { x: 475, y: 192, w: 330, h: 40 };
