@@ -1,7 +1,7 @@
 // All canvas drawing: sea, islands, harbors, boat, storms, particles, HUD and screens.
 // Nothing here changes game state; it only reads it.
 
-import { BOAT, BUOY, BUOY_BTN, HARBORS, PALETTE, RACE_STRIP, STORM, VIEW } from './config.js';
+import { BOAT, BUOY, BUOY_BTN, HARBORS, MAELSTROM, MAELSTROM_BAR, PALETTE, RACE_STRIP, STORM, VIEW } from './config.js';
 import { clamp } from './random.js';
 import { windName } from './wind.js';
 import { contractProgress } from './contracts.js';
@@ -51,9 +51,12 @@ export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
 
   function drawSea(state) {
+    // v5: NIGHTFALL on day 3 — a darker sea so the lantern glow and the gold
+    // channel pop. The palette swap is the whole sea, not a filter.
+    const night = state.dayIndex === 2;
     const g = ctx.createLinearGradient(0, 0, 0, VIEW.height);
-    g.addColorStop(0, PALETTE.seaShallow);
-    g.addColorStop(1, PALETTE.seaDeep);
+    g.addColorStop(0, night ? PALETTE.seaShallowNight : PALETTE.seaShallow);
+    g.addColorStop(1, night ? PALETTE.seaDeepNight : PALETTE.seaDeep);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
 
@@ -246,6 +249,62 @@ export function createRenderer(canvas) {
       }
       text(ctx, '⚠ STORM', s.x, s.y - STORM.radius - 12, 12, '#d8c8ff', 800, 'center');
     }
+    // v5: the MAELSTROM — one huge cell, dark violet core, bright swirling
+    // rim, a pulsing outer ring, and a label pill that names it at a glance.
+    const m = state.sea.maelstrom;
+    if (m) {
+      ctx.fillStyle = 'rgba(24, 10, 44, 0.72)';
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r, 0, TAU);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.9)';
+      ctx.lineWidth = 4;
+      for (let i = 0; i < 3; i += 1) {
+        const a = state.time * 1.1 + (i * TAU) / 3;
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, m.r * (0.45 + 0.18 * i), a, a + 2.2);
+        ctx.stroke();
+      }
+      // Lightning flicker inside the cell, time-based so it needs no rng.
+      if (Math.sin(state.time * 2.3) > 0.55) {
+        ctx.strokeStyle = `rgba(255, 240, 150, ${0.5 + 0.4 * Math.sin(state.time * 2.3)})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(m.x - 14, m.y - 52);
+        ctx.lineTo(m.x + 4, m.y - 8);
+        ctx.lineTo(m.x - 10, m.y + 4);
+        ctx.lineTo(m.x + 14, m.y + 52);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = `rgba(192, 132, 252, ${0.35 + 0.25 * Math.sin(state.time * 4)})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, m.r + 6 + 4 * Math.sin(state.time * 4), 0, TAU);
+      ctx.stroke();
+      // The name pill is drawn separately, AFTER the HUD (see
+      // drawMaelstromLabel) — above the cell it can sit under the HUD bars,
+      // and the bar would hide it.
+    }
+  }
+
+  // v5: the MAELSTROM's name pill, drawn last so it is never hidden behind a
+  // HUD bar no matter where on the map the boss is hunting. It sits above the
+  // cell, but never inside the top HUD band (y < 236, where the wind, race,
+  // carry and survive bars live): a high cell's pill is pushed down to just
+  // below the bars, still on the cell. X is clamped on-screen too.
+  function drawMaelstromLabel(state) {
+    const m = state.sea.maelstrom;
+    if (!m) return;
+    const pillX = Math.max(8, Math.min(VIEW.width - 152, m.x - 72));
+    const pillY = Math.max(236, m.y - m.r - 34);
+    ctx.fillStyle = 'rgba(6, 20, 32, 0.92)';
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(pillX, pillY, 144, 26, 12); else ctx.rect(pillX, pillY, 144, 26);
+    ctx.fill();
+    ctx.strokeStyle = '#c084fc';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    text(ctx, 'MAELSTROM', pillX + 72, pillY + 14, 16, '#e9d5ff', 800, 'center');
   }
 
   function drawGusts(state) {
@@ -587,14 +646,34 @@ export function createRenderer(canvas) {
     ctx.globalAlpha = 1;
   }
 
+  // v5: NIGHTFALL — a lantern glow around the boat, darkness at the edges.
+  // Drawn over the sea but under the HUD, so panels and text stay bright.
+  function drawNightfall(state) {
+    if (state.dayIndex !== 2) return;
+    const b = state.boat;
+    const g = ctx.createRadialGradient(b.x, b.y, 120, b.x, b.y, 720);
+    g.addColorStop(0, 'rgba(255, 200, 87, 0.10)');
+    g.addColorStop(0.45, 'rgba(4, 10, 18, 0.18)');
+    g.addColorStop(1, 'rgba(3, 8, 16, 0.52)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  }
+
   function drawHud(state) {
     const day = state.daySpec;
-    // Top-left: day + quota + sun timer.
-    panel(ctx, 14, 12, 300, 86);
+    // Top-left: day + quota + wave + sun timer. v5 adds the WAVE row — the
+    // panel grew taller and the contracts panel moved down to match.
+    panel(ctx, 14, 12, 300, 108);
     text(ctx, `DAY ${day.day} / 3`, 28, 34, 20, PALETTE.cream, 800);
-    text(ctx, `DELIVER ${state.delivered} / ${day.quota}`, 28, 62, 17, state.delivered >= day.quota ? PALETTE.ok : PALETTE.gold, 800);
-    text(ctx, '☀ ' + Math.ceil(state.timeLeft) + 's', 28, 84, 15, PALETTE.cream, 700);
-    bar(ctx, 170, 74, 128, 12, state.timeLeft / day.seconds, '#ffc857');
+    text(ctx, `DELIVER ${state.delivered} / ${day.quota}`, 28, 60, 17, state.delivered >= day.quota ? PALETTE.ok : PALETTE.gold, 800);
+    // v5: WAVE 1/3 with a progress bar through the current wave.
+    const elapsed = day.seconds - state.timeLeft;
+    const waveDur = state.waveDuration || day.seconds / 3;
+    const inWave = clamp((elapsed - (state.wave - 1) * waveDur) / waveDur, 0, 1);
+    text(ctx, `WAVE ${state.wave}/3`, 28, 84, 16, state.wave === 3 ? '#c084fc' : PALETTE.cream, 800);
+    bar(ctx, 170, 78, 128, 12, inWave, '#a78bfa');
+    text(ctx, '☀ ' + Math.ceil(state.timeLeft) + 's', 28, 104, 15, PALETTE.cream, 700);
+    bar(ctx, 170, 98, 128, 12, state.timeLeft / day.seconds, '#ffc857');
     // Delivery pips.
     for (let i = 0; i < day.quota; i += 1) {
       ctx.fillStyle = i < state.delivered ? PALETTE.gold : 'rgba(255,255,255,0.18)';
@@ -605,10 +684,10 @@ export function createRenderer(canvas) {
     }
     // Job board: exactly three contracts, each with progress + reward.
     // This is the panel that makes the loop read as tracked and varied.
-    panel(ctx, 14, 106, 300, 110);
-    text(ctx, 'CONTRACTS', 28, 126, 13, 'rgba(247,241,222,0.65)', 700);
+    panel(ctx, 14, 128, 300, 110);
+    text(ctx, 'CONTRACTS', 28, 148, 13, 'rgba(247,241,222,0.65)', 700);
     state.contracts.forEach((c, i) => {
-      const y = 148 + i * 24;
+      const y = 170 + i * 24;
       ctx.fillStyle = c.done ? PALETTE.ok : 'rgba(255,255,255,0.25)';
       ctx.beginPath();
       ctx.arc(36, y, 8, 0, TAU);
@@ -690,6 +769,15 @@ export function createRenderer(canvas) {
       panel(ctx, 475, 150, 330, 34);
       text(ctx, 'CARRYING: ' + label, 491, 168, 14, PALETTE.cream, 800);
     }
+    // v5: the MAELSTROM survive bar — top-centre under the carry bar, so the
+    // 20-second hunt is impossible to miss while it is on.
+    if (state.sea.maelstrom) {
+      const m = state.sea.maelstrom;
+      panel(ctx, MAELSTROM_BAR.x, MAELSTROM_BAR.y, MAELSTROM_BAR.w, MAELSTROM_BAR.h);
+      text(ctx, 'MAELSTROM — SURVIVE', MAELSTROM_BAR.x + 16, MAELSTROM_BAR.y + 14, 14, '#e9d5ff', 800);
+      text(ctx, Math.ceil(m.timer) + 's', MAELSTROM_BAR.x + MAELSTROM_BAR.w - 16, MAELSTROM_BAR.y + 14, 15, '#e9d5ff', 800, 'right');
+      bar(ctx, MAELSTROM_BAR.x + 16, MAELSTROM_BAR.y + 24, MAELSTROM_BAR.w - 32, 10, m.timer / MAELSTROM.surviveSec, '#c084fc');
+    }
     if (state.message) {
       ctx.globalAlpha = Math.min(1, state.messageTime * 2);
       text(ctx, state.message, VIEW.width / 2, 130, 30, PALETTE.cream, 800, 'center');
@@ -703,20 +791,30 @@ export function createRenderer(canvas) {
     panel(ctx, 340, 110, 600, 430);
     text(ctx, 'WINDWARD POST', 640, 195, 52, PALETTE.cream, 800, 'center');
     text(ctx, 'a mail run against the wind', 640, 238, 20, PALETTE.gold, 700, 'center');
-    text(ctx, 'Pick up crates at sea. Each crate is marked with a letter —', 640, 288, 16, PALETTE.cream, 700, 'center');
-    text(ctx, 'deliver it to the harbor with the same letter before sunset.', 640, 310, 16, PALETTE.cream, 700, 'center');
-    text(ctx, 'Sail with the wind to go fast. Dodge rocks and storms.', 640, 332, 16, PALETTE.cream, 700, 'center');
-    text(ctx, 'Gold ★ crates pay triple — if you dare fetch them.', 640, 356, 16, PALETTE.gold, 700, 'center');
-    text(ctx, 'Fragile ! crates pay double — but shatter if you hit a rock.', 640, 378, 16, '#cfe8ff', 700, 'center');
-    text(ctx, 'Each day: 3 contracts — rush, gold, storm, fragile, chain.', 640, 400, 15, PALETTE.cream, 700, 'center');
-    text(ctx, 'Lay buoys (B) — build a glowing gold channel: +35% speed, storms half as bad.', 640, 418, 15, '#7dd3fc', 700, 'center');
-    text(ctx, 'Race rival mail-boats PIP and JUNO — first to the crate wins it.', 640, 436, 15, '#ff9d9d', 700, 'center');
-    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 460, 14, 'rgba(247,241,222,0.8)', 700, 'center');
+    // The rules, one line each — the new v5 layers get a line of their own.
+    const lines = [
+      ['Pick up crates at sea. Each crate is marked with a letter —', PALETTE.cream, 16],
+      ['deliver it to the harbor with the same letter before sunset.', PALETTE.cream, 16],
+      ['Sail with the wind to go fast. Dodge rocks and storms.', PALETTE.cream, 16],
+      ['Gold ★ crates pay triple — if you dare fetch them.', PALETTE.gold, 16],
+      ['Fragile ! crates pay double — but shatter if you hit a rock.', '#cfe8ff', 16],
+      ['Each day: 3 contracts — rush, gold, storm, fragile, chain.', PALETTE.cream, 15],
+      ['Lay buoys (B) — build a glowing gold channel: +35% speed, storms half as bad.', '#7dd3fc', 15],
+      ['Race rival mail-boats PIP and JUNO — first to the crate wins it.', '#ff9d9d', 15],
+      ['Each day runs in 3 waves — storms rise every wave.', PALETTE.cream, 15],
+      ['Day 3 ends in NIGHTFALL, and the MAELSTROM hunts your boat — survive 20s for +250.', '#c084fc', 15],
+    ];
+    let y = 284;
+    for (const [str, color, size] of lines) {
+      text(ctx, str, 640, y, size, color, 700, 'center');
+      y += 19;
+    }
+    text(ctx, '← → STEER    ↑ SAIL    ↓ REEF    SPACE GUST    CLICK WAYPOINT', 640, 480, 14, 'rgba(247,241,222,0.8)', 700, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
-    text(ctx, '▶  PRESS ENTER OR CLICK TO SAIL', 640, 486, 20, PALETTE.cream, 800, 'center');
+    text(ctx, '▶  PRESS ENTER OR CLICK TO SAIL', 640, 504, 20, PALETTE.cream, 800, 'center');
     ctx.globalAlpha = 1;
-    if (state.best > 0) text(ctx, 'BEST SCORE ' + state.best, 640, 512, 15, PALETTE.gold, 700, 'center');
+    if (state.best > 0) text(ctx, 'BEST SCORE ' + state.best, 640, 526, 15, PALETTE.gold, 700, 'center');
   }
 
   function drawPause(state) {
@@ -755,21 +853,23 @@ export function createRenderer(canvas) {
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
     panel(ctx, 290, 130, 700, 440);
     text(ctx, `DAY ${state.daySpec.day} CLEAR!`, 640, 178, 40, PALETTE.gold, 800, 'center');
-    text(ctx, `Deliveries ${state.delivered}/${state.daySpec.quota}  ·  Score ${state.score}  ·  +${250} day bonus`, 640, 222, 17, PALETTE.cream, 700, 'center');
+    text(ctx, `Deliveries ${state.delivered}/${state.daySpec.quota}  ·  Score ${state.score}  ·  +${250} day bonus`, 640, 218, 17, PALETTE.cream, 700, 'center');
     const doneCount = state.contracts.filter((c) => c.done).length;
-    text(ctx, `Contracts ${doneCount}/3 done  ·  +${state.contractRewards} contract bonus`, 640, 248, 16, doneCount > 0 ? PALETTE.ok : 'rgba(247,241,222,0.75)', 700, 'center');
+    text(ctx, `Contracts ${doneCount}/3 done  ·  +${state.contractRewards} contract bonus`, 640, 242, 16, doneCount > 0 ? PALETTE.ok : 'rgba(247,241,222,0.75)', 700, 'center');
+    // v5: the waves survived — every day runs its full 3 waves.
+    text(ctx, `WAVES SURVIVED ${state.wavesSurvived}/3`, 640, 266, 16, '#a78bfa', 800, 'center');
     // v4: the day's race result, right under the contracts — the rivalry is
     // part of the day's story, not an afterthought.
-    text(ctx, `RACE TODAY — ${raceLine(state, false)}  ·  ${raceLeader(state, false)}`, 640, 274, 16, PALETTE.cream, 800, 'center');
-    text(ctx, 'CHOOSE ONE UPGRADE FOR TOMORROW', 640, 308, 16, PALETTE.cream, 800, 'center');
+    text(ctx, `RACE TODAY — ${raceLine(state, false)}  ·  ${raceLeader(state, false)}`, 640, 290, 16, PALETTE.cream, 800, 'center');
+    text(ctx, 'CHOOSE ONE UPGRADE FOR TOMORROW', 640, 318, 16, PALETTE.cream, 800, 'center');
     state.offers.forEach((u, i) => {
       const x = 330 + i * 220;
-      panel(ctx, x, 330, 200, 150);
-      text(ctx, u.icon, x + 100, 350, 34, PALETTE.gold, 800, 'center');
-      text(ctx, `[${i + 1}] ${u.name}`, x + 100, 392, 16, PALETTE.cream, 800, 'center');
-      text(ctx, u.desc, x + 100, 420, 14, 'rgba(247,241,222,0.8)', 700, 'center');
+      panel(ctx, x, 340, 200, 150);
+      text(ctx, u.icon, x + 100, 360, 34, PALETTE.gold, 800, 'center');
+      text(ctx, `[${i + 1}] ${u.name}`, x + 100, 402, 16, PALETTE.cream, 800, 'center');
+      text(ctx, u.desc, x + 100, 430, 14, 'rgba(247,241,222,0.8)', 700, 'center');
     });
-    text(ctx, 'Click a card or press 1 / 2 / 3', 640, 502, 15, 'rgba(247,241,222,0.75)', 700, 'center');
+    text(ctx, 'Click a card or press 1 / 2 / 3', 640, 516, 15, 'rgba(247,241,222,0.75)', 700, 'center');
   }
 
   function drawEnd(state, won) {
@@ -777,18 +877,27 @@ export function createRenderer(canvas) {
     ctx.fillRect(0, 0, VIEW.width, VIEW.height);
     panel(ctx, 330, 130, 620, 400);
     text(ctx, won ? 'ALL MAIL DELIVERED!' : 'THE POST FAILS…', 640, 192, 40, won ? PALETTE.gold : PALETTE.danger, 800, 'center');
-    text(ctx, won ? 'Every crate home. The harbors cheer your name.' : state.loseReason, 640, 238, 17, PALETTE.cream, 700, 'center');
-    text(ctx, `DAY ${state.daySpec.day} — ${state.delivered}/${state.daySpec.quota} CRATES`, 640, 264, 17, PALETTE.gold, 800, 'center');
-    text(ctx, 'SCORE  ' + state.score, 640, 298, 30, PALETTE.cream, 800, 'center');
-    text(ctx, `Deliveries ${state.stats.delivered}  ·  Gold crates ${state.stats.gold}  ·  Fragile ${state.stats.fragile}  ·  Contracts ${state.stats.contractsDone}`, 640, 340, 16, PALETTE.cream, 700, 'center');
-    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}  ·  Buoys ${state.stats.buoysPlaced}  ·  Best chain ×${state.stats.bestChain}`, 640, 368, 16, PALETTE.cream, 700, 'center');
+    text(ctx, won ? 'Every crate home. The harbors cheer your name.' : state.loseReason, 640, 236, 17, PALETTE.cream, 700, 'center');
+    text(ctx, `DAY ${state.daySpec.day} — ${state.delivered}/${state.daySpec.quota} CRATES`, 640, 262, 17, PALETTE.gold, 800, 'center');
+    text(ctx, 'SCORE  ' + state.score, 640, 294, 30, PALETTE.cream, 800, 'center');
+    text(ctx, `Deliveries ${state.stats.delivered}  ·  Gold crates ${state.stats.gold}  ·  Fragile ${state.stats.fragile}  ·  Contracts ${state.stats.contractsDone}`, 640, 334, 16, PALETTE.cream, 700, 'center');
+    text(ctx, `Tips earned ${state.tips}c  ·  Rocks hit ${state.stats.crashes}  ·  Buoys ${state.stats.buoysPlaced}  ·  Best chain ×${state.stats.bestChain}`, 640, 360, 16, PALETTE.cream, 700, 'center');
+    // The lines below stack from a cursor so the MAELSTROM bonus line (v5)
+    // only takes space when it was actually earned.
+    let y = 386;
+    if (state.maelstromSurvived) {
+      text(ctx, `MAELSTROM SURVIVED  +${state.maelstromBonus}`, 640, y, 16, '#c084fc', 800, 'center');
+      y += 26;
+    }
     // v4: the run's race result — who actually won the three-day race.
-    text(ctx, `RACE — ${raceLine(state, true)}`, 640, 396, 16, PALETTE.cream, 800, 'center');
-    text(ctx, raceLeader(state, true), 640, 424, 16, raceLeader(state, true).startsWith('YOU') ? PALETTE.gold : PALETTE.danger, 800, 'center');
-    if (state.score > state.best) text(ctx, '★ NEW BEST SCORE ★', 640, 452, 18, PALETTE.gold, 800, 'center');
+    text(ctx, `RACE — ${raceLine(state, true)}`, 640, y, 16, PALETTE.cream, 800, 'center');
+    y += 26;
+    text(ctx, raceLeader(state, true), 640, y, 16, raceLeader(state, true).startsWith('YOU') ? PALETTE.gold : PALETTE.danger, 800, 'center');
+    y += 26;
+    if (state.score > state.best) text(ctx, '★ NEW BEST SCORE ★', 640, y, 18, PALETTE.gold, 800, 'center');
     const blink = 0.6 + 0.4 * Math.sin(state.time * 4);
     ctx.globalAlpha = blink;
-    text(ctx, '▶  PRESS R OR ENTER TO SAIL AGAIN', 640, 488, 19, PALETTE.cream, 800, 'center');
+    text(ctx, '▶  PRESS R OR ENTER TO SAIL AGAIN', 640, 492, 19, PALETTE.cream, 800, 'center');
     ctx.globalAlpha = 1;
   }
 
@@ -805,7 +914,9 @@ export function createRenderer(canvas) {
     drawBoat(state);
     drawGuide(state);
     drawParticles(state);
+    drawNightfall(state);
     if (state.screen === 'play' || state.screen === 'pause') drawHud(state);
+    drawMaelstromLabel(state);
     if (state.screen === 'title') drawTitle(state);
     if (state.screen === 'pause') drawPause(state);
     if (state.screen === 'dayclear') drawDayClear(state);
