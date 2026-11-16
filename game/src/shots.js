@@ -127,39 +127,27 @@ export function stageShot(name, game) {
     });
     return;
   }
-  if (name === 'place') {
-    // The v3 decision moment: two buoys already linked into a channel, the
-    // boat carrying a crate mid-route, place mode ON with the ghost extending
-    // the channel toward the next leg. Everything staged is real game state.
+  if (name === 'race') {
+    // The v4 decision moment: day 2, a buoy channel laid along the route,
+    // the boat carrying a crate — and a rival closing in on the same run, so
+    // the race reads in one frame. Everything staged is real game state.
     input.press('Enter');
     game.step(STEP, input);
     game.startDay(1);
     game.state.tips = 60;
     runSteps(game, input, 6);
-    layChannel(game, 2);
-    runSteps(game, input, 30, (g) => {
-      const s2 = g.state;
-      if (s2.screen !== 'play') return true;
-      if (s2.boat.cargo.length === 0) return false;
-      if (s2.daySpec.seconds - s2.timeLeft < 12) return false;
-      const h2 = harborById(s2.sea, s2.boat.cargo[0].harbor);
-      return Math.hypot(s2.boat.x - h2.x, s2.boat.y - h2.y) > 200;
+    layChannel(game);
+    runSteps(game, input, 55, (g) => {
+      const s = g.state;
+      if (s.screen !== 'play') return true;
+      const b = s.boat;
+      if (b.cargo.length === 0) return false;
+      if (s.daySpec.seconds - s.timeLeft < 12) return false;
+      const h = harborById(s.sea, b.cargo[0].harbor);
+      if (Math.hypot(b.x - h.x, b.y - h.y) < 200) return false;
+      // Stop when a rival is closing in on the boat's run.
+      return s.rivals.some((r) => Math.hypot(r.x - b.x, r.y - b.y) < 340);
     });
-    const s3 = game.state;
-    if (s3.screen === 'play') {
-      const target = s3.boat.cargo.length > 0
-        ? harborById(s3.sea, s3.boat.cargo[0].harbor)
-        : { x: 640, y: 360 };
-      const last = s3.sea.buoys.list[s3.sea.buoys.list.length - 1] ?? { x: s3.boat.x, y: s3.boat.y };
-      const a = Math.atan2(target.y - last.y, target.x - last.x);
-      const ghost = {
-        x: clamp(last.x + Math.cos(a) * 190, 60, 1220),
-        y: clamp(last.y + Math.sin(a) * 190, 60, 660),
-      };
-      s3.placeBuoy = true;
-      s3.placeGhost = ghost;
-      input.mouse = { ...ghost };
-    }
     return;
   }
   if (name === 'upgrade') {
@@ -197,6 +185,10 @@ export function stageShot(name, game) {
     game.state.sea.crates = [];
     game.state.timeLeft = 0.4;
     runSteps(game, input, 2);
+    // Clear transient floaters/particles so the win screen's numbers are the
+    // only text in the frame — contract floaters kept cluttering the shot.
+    game.state.floaters = [];
+    game.state.particles = [];
     return;
   }
   // Default: title — six seconds of the boat sailing behind the title panel.
