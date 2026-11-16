@@ -31,9 +31,11 @@ export const HARBORS = [
 ];
 
 export const DAYS = [
-  { day: 1, quota: 3, seconds: 100, crates: 4, storms: 1 },
-  { day: 2, quota: 4, seconds: 110, crates: 5, storms: 2 },
-  { day: 3, quota: 5, seconds: 120, crates: 6, storms: 2 },
+  // v2: tighter day 1 (quota 4 in 90s, autopilot cleared 10 in 100s in v1),
+  // and real escalation — more storms, more rocks, faster wind veer per day.
+  { day: 1, quota: 4, seconds: 90, crates: 5, storms: 1, extraRocks: 0, stormSpeed: 26, veer: 0.05 },
+  { day: 2, quota: 5, seconds: 100, crates: 6, storms: 3, extraRocks: 2, stormSpeed: 32, veer: 0.08 },
+  { day: 3, quota: 6, seconds: 110, crates: 7, storms: 3, extraRocks: 4, stormSpeed: 40, veer: 0.12 },
 ];
 
 export const BOAT = {
@@ -63,9 +65,11 @@ export const GUST = {
 export const SCORE = {
   delivery: 100,
   goldDelivery: 300,
+  fragileDelivery: 200,
   chainStep: 25,
   tipNormal: 10,
   tipGold: 30,
+  tipFragile: 20,
   dayBonus: 250,
 };
 
@@ -87,5 +91,6 @@ export const STORM = {
 
 export const CRATE = {
   goldChance: 0.18,
+  fragileChance: 0.12,
   respawnDelaySec: 2.5,
 };
