@@ -26,6 +26,7 @@ export function createSea(rng, daySpec) {
     })),
     crates: [],
     storms: [],
+    buoys: { list: [] },
     crateTimer: 0,
   };
   for (let i = 0; i < daySpec.storms; i += 1) {
