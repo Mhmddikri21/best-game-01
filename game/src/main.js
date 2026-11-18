@@ -1,7 +1,7 @@
 // WINDWARD POST — game loop, screens and rules.
 // Owns the state; render.js only draws it, boat.js/sea.js/wind.js only step it.
 
-import { BOAT, BUOY, BUOY_BTN, DAYS, GUST, MAELSTROM, SCORE, VIEW, WAVES_PER_DAY } from './config.js';
+import { BOAT, BUOY, BUOY_BTN, DAYS, GUST, MAELSTROM, ROUTE_CARD, SCORE, VIEW, WAVES_PER_DAY, gradeFor } from './config.js';
 import { clamp, makeRng } from './random.js';
 import { createAudio } from './audio.js';
 import { createBoat, rockHit, stepBoat } from './boat.js';
@@ -14,6 +14,9 @@ import { buildContracts, forceCompleteMaelstrom, onDelivery, onMaelstrom, onRock
 import { inChannel, placeBuoy as layBuoy, placementProblem } from './buoys.js';
 import { createRivals, stepRivals } from './rivals.js';
 import { spawnMaelstrom, stepMaelstrom } from './maelstrom.js';
+import { buildRoute, GATE_PASS_R, inLane, ROUTE_REWARD, ROUTE_TIPS, routeSpeedMod, routeStormMod, ROUTES } from './routes.js';
+// v8: the pirate raid — BLACKJACK rams, HOOK steals crates.
+import { clearPirates, createPirateSystem, onPlayerGust, onRouteGate, startRaid, stepPirates } from './pirates.js';
 import { stageShot } from './shots.js';
 
 const STEP = 1 / 60;
@@ -43,6 +46,11 @@ export function createGame(canvas, seed) {
       screen: 'title',
       time: 0,
       seed,
+      // v8: the seeded rng on the state — pirates.js spawns from it, so the
+      // raid is reproducible from the seed like the rest of the sea. (Before
+      // this, spawnSpot fell back to Math.random and the end shot varied run
+      // to run: hull 84/94/61 for the same seed.)
+      rng,
       dayIndex: 0,
       daySpec: DAYS[0],
       timeLeft: DAYS[0].seconds,
@@ -57,6 +65,13 @@ export function createGame(canvas, seed) {
       loseReason: '',
       message: '',
       messageTime: 0,
+      // v6: the big center banner — the delivery/contract/overtake callout
+      // render.js draws while banner.time > 0 ({title, sub, time}).
+      banner: null,
+      // v10: the gate splash — the big +150 pop on completing both route
+      // gates (render.js draws while splash.time > 0).
+      splash: null,
+      raceLeader: '',
       particles: [],
       floaters: [],
       contracts: [],
@@ -72,7 +87,13 @@ export function createGame(canvas, seed) {
       wavesSurvived: 0,
       maelstromSurvived: false,
       maelstromBonus: 0,
-      stats: { delivered: 0, gold: 0, fragile: 0, contractsDone: 0, crashes: 0, bestChain: 1, buoysPlaced: 0 },
+      stats: { delivered: 0, gold: 0, fragile: 0, contractsDone: 0, crashes: 0, bestChain: 1, buoysPlaced: 0, routeGates: 0, routeBonus: 0, routeTips: 0, pirateRaids: 0, pirateRams: 0, piratesRepelled: 0, cratesRecovered: 0, cratesLost: 0 },
+      // v7: ROUTE CALL — the day's chosen lane. routeId is the pick for this
+      // day; routeState is the built lane + gates (null until picked).
+      routeId: null,
+      routeState: null,
+      // v8: the pirate raid system for this day (null until startDay builds it).
+      pirates: null,
       // v4: the race — per-day rival deliveries (reset each day) and run
       // totals (shown on the win screen). state.delivered is the player's
       // per-day count, so race.you is not stored twice.
@@ -114,9 +135,39 @@ export function createGame(canvas, seed) {
     s.boat = createBoat(keep);
     s.boat.gustMax = keep.gustMax ?? GUST.max;
     s.boat.gust = s.boat.gustMax;
-    s.screen = 'play';
+    // v7: the day starts at the route modal — the timer does not run until a
+    // lane is picked. chooseRoute() builds the lane and starts play.
+    s.routeId = null;
+    s.routeState = null;
+    // v8: fresh pirate raid system for the day (no raid until wave 2).
+    s.pirates = createPirateSystem();
+    s.screen = 'route';
+    s.banner = null;
+    s.splash = null;
+    s.raceLeader = '';
     s.message = `DAY ${dayIndex + 1} — DELIVER ${s.daySpec.quota} CRATES BEFORE SUNSET`;
     s.messageTime = 3;
+  }
+
+  // v7: lock in a route for the day — build its lane and gates, then play.
+  // Staging calls this directly (shots.js), so a staged lane is a real lane.
+  function chooseRoute(routeId) {
+    const s = game.state;
+    if (s.screen !== 'route') return;
+    s.routeState = buildRoute(s.sea, routeId);
+    s.routeId = s.routeState.route.id;
+    s.screen = 'play';
+    s.message = `${s.routeState.route.name} — SAIL ITS 2 GATES FOR +${ROUTE_REWARD}`;
+    s.messageTime = 2.5;
+    audio.click();
+  }
+
+  // Restart the day on the same route — no modal, the pick already stands.
+  function restartDay() {
+    const s = game.state;
+    const keep = s.routeId;
+    startDay(s.dayIndex);
+    if (keep) chooseRoute(keep);
   }
 
   function burst(x, y, color, n, speed) {
@@ -134,13 +185,21 @@ export function createGame(canvas, seed) {
 
   function completeContracts(done) {
     const s = game.state;
+    let bonus = 0;
     for (const c of done) {
       s.score += c.reward;
+      bonus += c.reward;
       floater(s.boat.x, s.boat.y - 66, `CONTRACT ${c.name} +${c.reward}`, '#ffc857', 20);
       s.message = `CONTRACT DONE — ${c.name} +${c.reward}`;
       s.messageTime = 2;
     }
-    if (done.length > 0) audio.gold();
+    if (done.length > 0) {
+      audio.gold();
+      // v6: the contract callout — overwritten by the delivery banner when a
+      // delivery completes the contract in the same tick (deliverAt sets its
+      // banner after this returns).
+      s.banner = { title: `CONTRACT DONE — ${done[0].name} +${bonus}`, sub: `${done.length} CONTRACT${done.length === 1 ? '' : 'S'} COMPLETE`, time: 1.6 };
+    }
   }
 
   function rockCrashFX() {
@@ -168,6 +227,8 @@ export function createGame(canvas, seed) {
 
   function endRun(won, reason) {
     const s = game.state;
+    // v8: the raid ends with the run — no raiders on the end screen.
+    clearPirates(s);
     s.loseReason = reason;
     s.screen = won ? 'win' : 'over';
     if (s.score > s.best) { s.best = s.score; saveBest(s.score); }
@@ -178,9 +239,11 @@ export function createGame(canvas, seed) {
     const s = game.state;
     const mine = s.boat.cargo.filter((c) => c.harbor === harbor.id);
     if (mine.length === 0) return;
+    let gainedTotal = 0;
     for (const c of mine) {
       const base = c.gold ? SCORE.goldDelivery : c.fragile ? SCORE.fragileDelivery : SCORE.delivery;
       const gained = base + SCORE.chainStep * (s.chain - 1);
+      gainedTotal += gained;
       s.score += gained;
       s.tips += c.gold ? SCORE.tipGold : c.fragile ? SCORE.tipFragile : SCORE.tipNormal;
       s.stats.delivered += 1;
@@ -198,7 +261,18 @@ export function createGame(canvas, seed) {
     const elapsed = s.daySpec.seconds - s.timeLeft;
     const done = [];
     for (const c of mine) done.push(...onDelivery(s, c, elapsed));
+    const contractBonus = done.reduce((a, c) => a + c.reward, 0);
     completeContracts(done);
+    // v6: the delivery banner — the big callout, with the chain, the grade
+    // and the contract bonus folded in, so one delivery reads as a result.
+    s.banner = {
+      title: `${mine.some((c) => c.gold) ? '★ GOLD DELIVERED! ' : ''}DELIVERED! +${gainedTotal}`,
+      sub: `CHAIN ×${s.chain} • GRADE ${gradeFor(s.chain)} • +${s.tips}c TIPS${contractBonus > 0 ? ` • CONTRACT +${contractBonus}` : ''}`,
+      time: 1.8,
+    };
+    // v6: the last delivery's numbers, so a staged screenshot can re-show
+    // the banner from a real delivery (shots.js), instead of inventing one.
+    s.lastDelivery = { gained: gainedTotal, chain: s.chain, tips: s.tips, contractBonus };
     s.boat.cargo = s.boat.cargo.filter((c) => c.harbor !== harbor.id);
     harbor.pulse = 1;
     audio.deliver();
@@ -260,9 +334,16 @@ export function createGame(canvas, seed) {
         }
         s.messageTime = 3;
         audio.horn();
+        // v8: wave 2 brings the pirate raid — BLACKJACK (and HOOK from day 2).
+        // Inside the loop: a clock jump can cross two waves in one tick, and
+        // the raid must still fire when wave 2 is crossed.
+        if (s.wave === 2) startRaid(s);
       }
     }
     const events = [];
+    // v7: the route lane's speed and position, read before the boat steps.
+    s.boat.inLane = inLane(s.routeState, s.boat.x, s.boat.y);
+    s.boat.routeSpeed = routeSpeedMod(s.routeState, s.boat, s.sea);
     stepBoat(s.boat, input, s.wind, s.sea, dt, events);
     // v4: rivals step after the player, so the player wins a same-tick race
     // to a crate. A rival banking a crate can complete contracts (OUTRACE
@@ -272,8 +353,32 @@ export function createGame(canvas, seed) {
       burst: (x, y, color, n, speed) => burst(x, y, color, n, speed),
     });
     if (rivalDone.length > 0) completeContracts(rivalDone);
+    // v8: the pirate raid steps after the rivals, so a raider can steal a
+    // crate the same tick a rival banks one. A ram that sinks the boat ends
+    // the run (same style as the storm-damage checks below).
+    const pirateSunk = stepPirates(s, dt, {
+      floater: (x, y, str, color, size) => floater(x, y, str, color, size),
+      burst: (x, y, color, n, speed) => burst(x, y, color, n, speed),
+    });
+    if (pirateSunk) endRun(false, pirateSunk);
+    // v6: the overtake callout — the race leader flipping to YOU is a
+    // moment, so it gets a banner the same way a delivery does.
+    {
+      let leader = 'YOU';
+      let best = s.delivered;
+      for (const r of s.rivals) {
+        const c = s.race.rivals[r.id] ?? 0;
+        if (c > best) { best = c; leader = r.name; }
+      }
+      if (leader === 'YOU' && s.raceLeader && s.raceLeader !== 'YOU') {
+        s.banner = { title: `YOU PASS ${s.raceLeader}!`, sub: `RACE — YOU ${s.delivered} • ${s.raceLeader} ${best}`, time: 1.6 };
+      }
+      s.raceLeader = leader;
+    }
     if (events.some((e) => e.type === 'gust')) {
       audio.gust();
+      // v8: a gust within range stuns the raiders and breaks their attack.
+      onPlayerGust(s);
       burst(s.boat.x, s.boat.y, '#7dd3fc', 14, 200);
     }
 
@@ -303,11 +408,45 @@ export function createGame(canvas, seed) {
     if (storm) {
       let rate = s.upgradeMods.stormShield ? 0.5 : 1;
       if (s.boat.inChannel) rate *= BUOY.stormShelter;
+      // v7: the route lane changes storm risk — safe halves it, storm doubles it.
+      rate *= routeStormMod(s.routeState, s.boat);
       s.boat.hull -= BOAT.stormDamagePerSec * rate * dt;
       completeContracts(onStorm(s, dt));
       if (s.chain > 1 && rng() < dt * 2) s.chain = 1;
       if (rng() < dt * 6) burst(s.boat.x, s.boat.y, '#a78bfa', 3, 90);
       if (s.boat.hull <= 0) { s.boat.hull = 0; endRun(false, 'A storm tore the mailboat apart.'); }
+    }
+
+    // v7: route gates — sail through the next gate in order. Both gates pay.
+    if (s.routeState && !s.routeState.done) {
+      const next = s.routeState.gates.find((g) => !g.passed);
+      if (next && Math.hypot(s.boat.x - next.x, s.boat.y - next.y) < GATE_PASS_R) {
+        next.passed = true;
+        // v8: a gate pass shakes off a raider's pursuit (once per raider).
+        onRouteGate(s);
+        s.stats.routeGates += 1;
+        const passed = s.routeState.gates.filter((g) => g.passed).length;
+        audio.pickup();
+        floater(next.x, next.y - 56, `GATE ${passed}/2`, s.routeState.route.color, 24);
+        if (passed === 2) {
+          s.routeState.done = true;
+          s.score += ROUTE_REWARD;
+          s.tips += ROUTE_TIPS;
+          s.stats.routeBonus += ROUTE_REWARD;
+          s.stats.routeTips += ROUTE_TIPS;
+          // v10: completing both gates fires the big +150 splash instead of
+          // the 40px banner — the reward pop has to read at sheet size.
+          s.splash = {
+            title: '+150',
+            time: 1.4,
+            maxTime: 1.4,
+          };
+          audio.gold();
+        } else {
+          s.message = `${s.routeState.route.name} — GATE ${passed}/2`;
+          s.messageTime = 1.6;
+        }
+      }
     }
 
     // v5: the MAELSTROM hunt — it chases the boat, hurts more than a normal
@@ -320,6 +459,7 @@ export function createGame(canvas, seed) {
       if (Math.hypot(s.boat.x - m.x, s.boat.y - m.y) < m.r) {
         let rate = s.upgradeMods.stormShield ? 0.5 : 1;
         if (s.boat.inChannel) rate *= BUOY.stormShelter;
+        rate *= routeStormMod(s.routeState, s.boat);
         s.boat.hull -= MAELSTROM.damagePerSec * rate * dt;
         if (rng() < dt * 6) burst(s.boat.x, s.boat.y, '#c084fc', 3, 90);
         if (s.boat.hull <= 0) { s.boat.hull = 0; endRun(false, 'The Maelstrom swallowed the mailboat.'); }
@@ -357,6 +497,8 @@ export function createGame(canvas, seed) {
         s.score += SCORE.dayBonus;
         if (s.dayIndex === 2) endRun(true, '');
         else {
+          // v8: the raid ends with the day — no raiders on the upgrade screen.
+          clearPirates(s);
           s.offers = offerUpgrades(s.owned.map((u) => u.id), rng);
           s.screen = 'dayclear';
           audio.horn();
@@ -371,6 +513,16 @@ export function createGame(canvas, seed) {
     s.particles = s.particles.filter((p) => p.life > 0);
     for (const f of s.floaters) { f.y -= 34 * dt; f.life -= dt; }
     s.floaters = s.floaters.filter((f) => f.life > 0);
+    // v6: the banner fades out on its own clock.
+    if (s.banner) {
+      s.banner.time -= dt;
+      if (s.banner.time <= 0) s.banner = null;
+    }
+    // v10: the gate splash fades on its own clock, next to the banner.
+    if (s.splash) {
+      s.splash.time -= dt;
+      if (s.splash.time <= 0) s.splash = null;
+    }
     s.messageTime = Math.max(0, s.messageTime - dt);
   }
 
@@ -404,13 +556,24 @@ export function createGame(canvas, seed) {
         input.clearWaypoint();
         startDay(0);
       }
+    } else if (s.screen === 'route') {
+      // v7: pick the day's lane — keys, click, or ENTER for the safe default.
+      const n = input.wasPressed('Digit1') ? 0 : input.wasPressed('Digit2') ? 1 : input.wasPressed('Digit3') ? 2 : -1;
+      if (n >= 0) chooseRoute(ROUTES[n].id);
+      else if (input.wasPressed('Enter')) chooseRoute('safe');
+      else if (input.waypoint) {
+        const m = input.mouse;
+        const idx = ROUTES.findIndex((r, i) => m.x >= ROUTE_CARD.x0 + i * ROUTE_CARD.gap && m.x <= ROUTE_CARD.x0 + i * ROUTE_CARD.gap + ROUTE_CARD.w && m.y >= ROUTE_CARD.y && m.y <= ROUTE_CARD.y + ROUTE_CARD.h);
+        input.clearWaypoint();
+        if (idx >= 0) chooseRoute(ROUTES[idx].id);
+      }
     } else if (s.screen === 'play') {
       if (input.wasPressed('KeyP') || input.wasPressed('Escape')) { s.screen = 'pause'; audio.click(); }
-      else if (input.wasPressed('KeyR')) startDay(s.dayIndex);
+      else if (input.wasPressed('KeyR')) restartDay();
       else stepPlay(dt, input);
     } else if (s.screen === 'pause') {
       if (input.wasPressed('KeyP') || input.wasPressed('Escape') || input.wasPressed('Enter')) s.screen = 'play';
-      else if (input.wasPressed('KeyR')) startDay(s.dayIndex);
+      else if (input.wasPressed('KeyR')) restartDay();
     } else if (s.screen === 'dayclear') {
       const n = input.wasPressed('Digit1') ? 0 : input.wasPressed('Digit2') ? 1 : input.wasPressed('Digit3') ? 2 : -1;
       if (n >= 0 && s.offers[n]) applyOffer(s.offers[n]);
@@ -450,6 +613,8 @@ export function createGame(canvas, seed) {
       if (res.ok) completeContracts(res.done);
       return res;
     },
+    // v7: staging picks the route directly (shots.js) — a staged lane is real.
+    chooseRoute(id) { chooseRoute(id); },
     placementProblem(x, y) { return placementProblem(game.state, x, y); },
     inChannel(x, y) { return inChannel(game.state.sea.buoys, x, y); },
     get rng() { return rng; },
