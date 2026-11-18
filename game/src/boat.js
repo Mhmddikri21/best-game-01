@@ -52,7 +52,9 @@ export function stepBoat(boat, input, wind, sea, dt, events) {
   // v3: inside your buoy channel the water is calm and the boat runs faster.
   boat.inChannel = inChannel(sea.buoys, boat.x, boat.y);
   const channelBoost = boat.inChannel ? BUOY.speedBoost : 1;
-  const target = BOAT.baseSpeed * (boat.speedMod ?? 1) * boat.sail * help * channelBoost;
+  // v7: the route lane's speed — reef is faster in its lane, storm fastest
+  // near a storm's edge. Set by main.js before each step (1 when no route).
+  const target = BOAT.baseSpeed * (boat.speedMod ?? 1) * boat.sail * help * channelBoost * (boat.routeSpeed ?? 1);
   boat.speed += clamp(target - boat.speed, -BOAT.accel * dt, BOAT.accel * dt);
 
   if (input.wasPressed('Space') && boat.gust >= GUST.cost && boat.gustTime <= 0) {
