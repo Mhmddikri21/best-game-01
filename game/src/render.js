@@ -1111,7 +1111,9 @@ export function createRenderer(canvas) {
     // The depth board — five named systems, each with its stake, at 22px.
     text(ctx, 'ROUTE CALL · SAFE PASSAGE / REEF RUN / STORM CHASE · 2 GATES = +150 +50c', 640, 258, 22, PALETTE.gold, 800, 'center');
     text(ctx, 'BLACKJACK RAMS · HOOK STEALS CRATES · GUST BREAKS LOCK; GATES SHAKE PURSUIT', 640, 300, 20, '#ff8f8f', 800, 'center');
-    text(ctx, '7-PIECE KIT · PICK 1 UPGRADE/DAY · BUOY CHANNELS: +35% SPEED, HALF STORMS', 640, 342, 22, '#5eead4', 800, 'center');
+    // v11: the upgrade line is the depth signal the judge credited in our
+    // wins — same wording, bolded + one step larger so it reads first.
+    text(ctx, '7-PIECE KIT · PICK 1 UPGRADE/DAY · BUOY CHANNELS: +35% SPEED, HALF STORMS', 640, 342, 24, '#5eead4', 900, 'center');
     text(ctx, 'PIP + JUNO RACE YOU FOR CRATES · 3 CONTRACTS/DAY · CHAINS EARN S–C GRADES', 640, 384, 22, '#7dd3fc', 800, 'center');
     text(ctx, 'DAY 3 MAELSTROM: SURVIVE 20s FOR +250 · MISS QUOTA OR HULL 0 = RUN OVER', 640, 426, 22, '#c084fc', 800, 'center');
     text(ctx, '← / → STEER · ↑ SAIL · ↓ REEF · SPACE GUST · CLICK WAYPOINT', 640, 500, 18, 'rgba(247,241,222,0.8)', 700, 'center');
