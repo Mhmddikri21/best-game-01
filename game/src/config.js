@@ -140,6 +140,16 @@ export const RACE_STRIP = { x: 490, y: 106, w: 300, h: 34 };
 // its damage, and a gust burst breaks the chase. Survive 20s for +250.
 export const WAVES_PER_DAY = 3;
 
+// v6: delivery grade from the chain — the combo grade the HUD shows next
+// to CHAIN and in the delivery banner. S/A/B/C from the streak length.
+export function gradeFor(chain) {
+  if (chain >= 5) return 'S';
+  if (chain >= 4) return 'A';
+  if (chain >= 3) return 'B';
+  if (chain >= 2) return 'C';
+  return '—';
+}
+
 export const MAELSTROM = {
   radius: 130, // ~1.7x a normal storm cell — big, but escapable
   speed: 60, // a fleeing boat outruns it except dead upwind; ignoring it still gets you caught
@@ -149,3 +159,39 @@ export const MAELSTROM = {
 };
 
 export const MAELSTROM_BAR = { x: 475, y: 192, w: 330, h: 40 };
+
+// v7: ROUTE CALL — the per-day lane choice. The card rect is shared by
+// render.js (draws the route modal) and main.js (clicks it), so the two can
+// never drift — same pattern as BUOY_BTN.
+// v8: PIRATE RAID — the second mechanics layer. Named enemy boats that
+// hunt the player mid-day (from wave 2): BLACKJACK the CUTTER rams the boat
+// and knocks cargo loose; HOOK the SNATCHER steals floating crates and
+// flees to the edge. Gust stuns them, route gates shake them off, buoy
+// channels slow them. Numbers from Luna's design (v8/luna-design.md).
+export const PIRATE = {
+  blackjackBase: 157, // px/s before wind help (1.05x the player's cruise)
+  hookBase: 135, // 0.9x cruise while hunting crates
+  hookFleeBase: 172, // 1.15x cruise while fleeing with a stolen crate
+  hookFollowFactor: 0.8, // speed factor when following the player, no crates
+  turnRate: 2.4,
+  ramRange: 64, // within this, BLACKJACK stops and telegraphs the ram
+  ramWindupSec: 0.9,
+  ramDamage: 10, // hull points per ram
+  ramKnockback: 90, // px BLACKJACK is thrown back after a ram
+  maxRamsPerDay: 2,
+  ramCooldownSec: 9,
+  retreatSec: 6,
+  raidDurationSec: 45, // BLACKJACK leaves after this long in the raid
+  hookStealRange: 40,
+  hookStealSec: 1.4,
+  hookEscapeSec: 12, // time to stop HOOK after a theft before the crate is lost
+  gustStunSec: 2,
+  gustStunRange: 220,
+  channelSlow: 0.65, // speed multiplier inside a player buoy channel
+  raidRepelScore: 100,
+  raidRepelTips: 50,
+  crateRecoverScore: 75,
+  crateRecoverTips: 25,
+};
+
+export const ROUTE_CARD = { x0: 330, y: 300, w: 200, h: 190, gap: 220 };
